@@ -1,10 +1,11 @@
 package helpers
 
 import (
+	"time"
+
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/tls"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"time"
 )
 
 // A simple mock to use whenever a record.EventRecorder is needed for a test
@@ -69,7 +70,13 @@ func (cert *CertMock) CertData() []byte {
 	return []byte("tls.crt")
 }
 
-func (ca *CertMock) CreateAndSignCertificate(commonName string, orgUnit string, dnsnames []string, validity time.Duration) (cert tls.Cert, err error) {
+func (ca *CertMock) CreateAndSignCertificate(
+	commonName string,
+	orgUnit string,
+	dnsnames []string,
+	validity time.Duration,
+	algorithm tls.KeyGenMethod,
+) (cert tls.Cert, err error) {
 	return &CertMock{}, nil
 }
 

@@ -2,13 +2,19 @@ package reconcilers
 
 import (
 	"context"
+	cryptotls "crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"strings"
 
 	opsterv1 "github.com/Opster/opensearch-k8s-operator/opensearch-operator/api/v1"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/mocks/github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/k8s"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/helpers"
+	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/tls"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/format"
 	"github.com/stretchr/testify/mock"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,13 +30,13 @@ func newTLSReconciler(k8sClient *k8s.MockK8sClient, spec *opsterv1.OpenSearchClu
 		reconcilerContext: &reconcilerContext,
 		instance:          spec,
 		logger:            log.FromContext(context.Background()),
-		pki:               helpers.NewMockPKI(),
+		pki:               tls.NewPKI(),
 	}
-	underTest.pki = helpers.NewMockPKI()
 	return &reconcilerContext, underTest
 }
 
 var _ = Describe("TLS Controller", func() {
+	format.MaxLength = 0
 
 	Context("When Reconciling the TLS configuration with no existing secrets", func() {
 		It("should create the needed secrets ", func() {
@@ -42,7 +48,9 @@ var _ = Describe("TLS Controller", func() {
 			spec := opsterv1.OpenSearchCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: clusterName, UID: "dummyuid"},
 				Spec: opsterv1.ClusterSpec{
-					General: opsterv1.GeneralConfig{},
+					General: opsterv1.GeneralConfig{
+						Version: "2.0.0",
+					},
 					Security: &opsterv1.Security{Tls: &opsterv1.TlsConfig{
 						Transport: &opsterv1.TlsConfigTransport{Generate: true},
 						Http:      &opsterv1.TlsConfigHttp{Generate: true},
@@ -58,14 +66,35 @@ var _ = Describe("TLS Controller", func() {
 			mockClient.EXPECT().GetSecret(httpSecretName, clusterName).Return(corev1.Secret{}, NotFoundError())
 			mockClient.EXPECT().GetSecret(adminSecretName, clusterName).Return(corev1.Secret{}, NotFoundError())
 
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == caSecretName })).Return(&ctrl.Result{}, nil)
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == adminSecretName })).Return(&ctrl.Result{}, nil)
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == transportSecretName })).Return(&ctrl.Result{}, nil)
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == httpSecretName })).Return(&ctrl.Result{}, nil)
+			var caSecretData, transportSecretData, httpSecretData, adminSecretData map[string][]byte
+
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == caSecretName })).
+				Run(func(args mock.Arguments) { caSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == transportSecretName })).
+				Run(func(args mock.Arguments) { transportSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == httpSecretName })).
+				Run(func(args mock.Arguments) { httpSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == adminSecretName })).
+				Run(func(args mock.Arguments) { adminSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
 
 			reconcilerContext, underTest := newTLSReconciler(mockClient, &spec)
 			_, err := underTest.Reconcile()
 			Expect(err).ToNot(HaveOccurred())
+
+			caCertData := caSecretData["ca.crt"]
+			Expect(caCertData).ToNot(BeNil(), "a ca.crt exists in CA Secret")
+			ExpectAllCertificatesValidAndSignedByIncludedCA(transportSecretData, "transport")
+			ExpectAllCertificatesValidAndSignedByIncludedCA(httpSecretData, "http")
+			ExpectAllCertificatesValidAndSignedByIncludedCA(adminSecretData, "admin")
+
+			// spot check
+			ExpectPublicKeyAlgorithm(transportSecretData["tls.crt"]).To(Equal(x509.Ed25519))
+			ExpectPublicKeyAlgorithm(httpSecretData["tls.crt"]).To(Equal(x509.RSA))
+
 			Expect(reconcilerContext.Volumes).Should(HaveLen(2))
 			Expect(reconcilerContext.VolumeMounts).Should(HaveLen(2))
 			value, exists := reconcilerContext.OpenSearchConfig["plugins.security.nodes_dn"]
@@ -87,7 +116,9 @@ var _ = Describe("TLS Controller", func() {
 			spec := opsterv1.OpenSearchCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: clusterName, UID: "dummyuid"},
 				Spec: opsterv1.ClusterSpec{
-					General: opsterv1.GeneralConfig{},
+					General: opsterv1.GeneralConfig{
+						Version: "2.0.0",
+					},
 					Security: &opsterv1.Security{Tls: &opsterv1.TlsConfig{
 						Transport: &opsterv1.TlsConfigTransport{Generate: true, PerNode: true},
 						Http:      &opsterv1.TlsConfigHttp{Generate: true},
@@ -112,38 +143,40 @@ var _ = Describe("TLS Controller", func() {
 			mockClient.EXPECT().GetSecret(httpSecretName, clusterName).Return(corev1.Secret{}, NotFoundError())
 			mockClient.EXPECT().GetSecret(adminSecretName, clusterName).Return(corev1.Secret{}, NotFoundError())
 
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == caSecretName })).Return(&ctrl.Result{}, nil)
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == adminSecretName })).Return(&ctrl.Result{}, nil)
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool {
-				if secret.ObjectMeta.Name != transportSecretName {
-					return false
-				}
-				if _, exists := secret.Data["ca.crt"]; !exists {
-					fmt.Printf("ca.crt missing from transport secret\n")
-					return false
-				}
-				for _, nodePool := range spec.Spec.NodePools {
-					var i int32
-					for i = 0; i < nodePool.Replicas; i++ {
-						name := fmt.Sprintf("tls-pernode-%s-%d", nodePool.Component, i)
-						if _, exists := secret.Data[name+".crt"]; !exists {
-							fmt.Printf("%s.crt missing from transport secret\n", name)
-							return false
-						}
-						if _, exists := secret.Data[name+".key"]; !exists {
-							fmt.Printf("%s.key missing from transport secret\n", name)
-							return false
-						}
-					}
-				}
-				return true
-			},
-			)).Return(&ctrl.Result{}, nil)
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == httpSecretName })).Return(&ctrl.Result{}, nil)
+			var caSecretData, transportSecretData, httpSecretData, adminSecretData map[string][]byte
+
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == caSecretName })).
+				Run(func(args mock.Arguments) { caSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == transportSecretName })).
+				Run(func(args mock.Arguments) { transportSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == httpSecretName })).
+				Run(func(args mock.Arguments) { httpSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == adminSecretName })).
+				Run(func(args mock.Arguments) { adminSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
 
 			reconcilerContext, underTest := newTLSReconciler(mockClient, &spec)
 			_, err := underTest.Reconcile()
 			Expect(err).ToNot(HaveOccurred())
+
+			caCertData := caSecretData["ca.crt"]
+			Expect(caCertData).ToNot(BeNil(), "ca.crt exists in CA Secret")
+			ExpectAllCertificatesValidAndSignedByIncludedCA(transportSecretData, "transport")
+			ExpectAllCertificatesValidAndSignedByIncludedCA(httpSecretData, "http")
+			ExpectAllCertificatesValidAndSignedByIncludedCA(adminSecretData, "admin")
+
+			Expect(transportSecretData["ca.crt"]).ToNot(BeNil(), "ca.crt missing from transport secret")
+			for _, nodePool := range spec.Spec.NodePools {
+				var i int32
+				for i = 0; i < nodePool.Replicas; i++ {
+					name := fmt.Sprintf("tls-pernode-%s-%d", nodePool.Component, i)
+					Expect(transportSecretData[name+".crt"]).ToNot(BeNil(), "%s.crt missing from transport secret", name)
+					Expect(transportSecretData[name+".key"]).ToNot(BeNil(), "%s.key missing from transport secret", name)
+				}
+			}
 
 			Expect(reconcilerContext.Volumes).Should(HaveLen(2))
 			Expect(reconcilerContext.VolumeMounts).Should(HaveLen(2))
@@ -208,7 +241,7 @@ var _ = Describe("TLS Controller", func() {
 			clusterName := "tls-test-existingsecretspernode"
 			spec := opsterv1.OpenSearchCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: clusterName, UID: "dummyuid"},
-				Spec: opsterv1.ClusterSpec{General: opsterv1.GeneralConfig{}, Security: &opsterv1.Security{Tls: &opsterv1.TlsConfig{
+				Spec: opsterv1.ClusterSpec{General: opsterv1.GeneralConfig{Version: "2.0.0"}, Security: &opsterv1.Security{Tls: &opsterv1.TlsConfig{
 					Transport: &opsterv1.TlsConfigTransport{
 						Generate: false,
 						PerNode:  true,
@@ -262,30 +295,53 @@ var _ = Describe("TLS Controller", func() {
 					},
 				},
 				}}}
-			data := map[string][]byte{
-				"ca.crt": []byte("ca.crt"),
-				"ca.key": []byte("ca.key"),
-			}
-			caSecret := corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: caSecretName, Namespace: clusterName},
-				Data:       data,
-			}
 
 			mockClient := k8s.NewMockK8sClient(GinkgoT())
 			mockClient.EXPECT().Context().Return(context.Background())
 			mockClient.EXPECT().Scheme().Return(scheme.Scheme)
-			mockClient.EXPECT().GetSecret(caSecretName, clusterName).Return(caSecret, nil)
+
+			var testCaCertData []byte
+			{
+				testCaPki := tls.NewPKI()
+				testCa, err := testCaPki.GenerateCA("test CA")
+				if err != nil {
+					panic(fmt.Sprintf("setup of test CA failed: %v", err))
+				}
+
+				data := map[string][]byte{
+					"ca.crt": testCa.CertData(),
+					"ca.key": testCa.KeyData(),
+				}
+				caSecret := corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: caSecretName, Namespace: clusterName},
+					Data:       data,
+				}
+				mockClient.EXPECT().GetSecret(caSecretName, clusterName).Return(caSecret, nil)
+				testCaCertData = testCa.CertData()
+			}
+
 			mockClient.EXPECT().GetSecret(clusterName+"-transport-cert", clusterName).Return(corev1.Secret{}, NotFoundError())
 			mockClient.EXPECT().GetSecret(clusterName+"-http-cert", clusterName).Return(corev1.Secret{}, NotFoundError())
 			mockClient.EXPECT().GetSecret(clusterName+"-admin-cert", clusterName).Return(corev1.Secret{}, NotFoundError())
 
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == clusterName+"-transport-cert" })).Return(&ctrl.Result{}, nil)
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == clusterName+"-http-cert" })).Return(&ctrl.Result{}, nil)
-			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == clusterName+"-admin-cert" })).Return(&ctrl.Result{}, nil)
+			var transportSecretData, httpSecretData, adminSecretData map[string][]byte
+
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == clusterName+"-transport-cert" })).
+				Run(func(args mock.Arguments) { transportSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == clusterName+"-http-cert" })).
+				Run(func(args mock.Arguments) { httpSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == clusterName+"-admin-cert" })).
+				Run(func(args mock.Arguments) { adminSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
 
 			reconcilerContext, underTest := newTLSReconciler(mockClient, &spec)
 			_, err := underTest.Reconcile()
 			Expect(err).ToNot(HaveOccurred())
+			ExpectAllCertificatesValidAndSignedByCA(transportSecretData, "transport", testCaCertData)
+			ExpectAllCertificatesValidAndSignedByCA(httpSecretData, "http", testCaCertData)
+			ExpectAllCertificatesValidAndSignedByCA(adminSecretData, "admin", testCaCertData)
 
 			Expect(reconcilerContext.Volumes).Should(HaveLen(2))
 			Expect(reconcilerContext.VolumeMounts).Should(HaveLen(2))
@@ -522,3 +578,56 @@ var _ = Describe("TLS Controller", func() {
 		})
 	})
 })
+
+func ExpectAllCertificatesValidAndSignedByIncludedCA(secretData map[string][]byte, description string) {
+	Expect(secretData).ToNot(BeNil(), "%s has secret data", description)
+
+	caCertData := secretData["ca.crt"]
+	Expect(caCertData).ToNot(BeNil(), "%s has a ca.crt", description)
+
+	ExpectAllCertificatesValidAndSignedByCA(secretData, description, caCertData)
+}
+
+func ExpectAllCertificatesValidAndSignedByCA(secretData map[string][]byte, description string, caCertData []byte) {
+	pemBlock, _ := pem.Decode(caCertData)
+	ca509Cert, err := x509.ParseCertificate(pemBlock.Bytes)
+	Expect(err).ToNot(HaveOccurred(), "%s has a parseable CA cert")
+
+	signingCertPool := x509.NewCertPool()
+	signingCertPool.AddCert(ca509Cert)
+
+	_, err = ca509Cert.Verify(x509.VerifyOptions{
+		Roots: signingCertPool,
+	})
+	Expect(err).ToNot(HaveOccurred(), "%s %s is a valid, self-signed certificate", description, "CA Cert")
+
+	for certFileName, certData := range secretData {
+		Expect(certData).ToNot(BeNil(), "%s %s has data", description, certFileName)
+
+		if certFileName == "ca.crt" {
+			continue
+		}
+
+		if strings.HasSuffix(certFileName, ".crt") {
+
+			keyFileName := strings.TrimSuffix(certFileName, ".crt") + ".key"
+			keyData := secretData[keyFileName]
+			Expect(keyData).ToNot(BeNil(), "%s %s has matching .key file in secret", description, certFileName)
+
+			tlsCert, err := cryptotls.X509KeyPair(certData, keyData)
+			Expect(err).ToNot(HaveOccurred(), "%s %s and %s is a valid cert and key pair", description, certFileName, keyFileName)
+
+			_, err = tlsCert.Leaf.Verify(x509.VerifyOptions{
+				Roots: signingCertPool,
+			})
+			Expect(err).ToNot(HaveOccurred(), "%s %s is signed by the CA in its ca.crt", description, certFileName)
+
+		}
+	}
+}
+
+func ExpectPublicKeyAlgorithm(certPemData []byte) Assertion {
+	pemBlock, _ := pem.Decode(certPemData)
+	cert, _ := x509.ParseCertificate(pemBlock.Bytes)
+	return Expect(cert.PublicKeyAlgorithm)
+}

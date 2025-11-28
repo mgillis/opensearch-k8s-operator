@@ -144,7 +144,8 @@ func (r *DashboardsReconciler) handleTls() ([]corev1.Volume, []corev1.VolumeMoun
 			if tlsConfig.Duration != nil {
 				validity = tlsConfig.Duration.Duration
 			}
-			nodeCert, err := ca.CreateAndSignCertificate(clusterName+"-dashboards", clusterName, dnsNames, validity)
+			nodeCert, err := ca.CreateAndSignCertificate(clusterName+"-dashboards", clusterName, dnsNames, validity,
+				tls.KeyGenMethodRSA4096)
 			if err != nil {
 				r.logger.Error(err, "Failed to create tls certificate")
 				r.recorder.AnnotatedEventf(r.instance, annotations, "Warning", "Security", "Failed to store tls certificate for Dashboard Cluster")

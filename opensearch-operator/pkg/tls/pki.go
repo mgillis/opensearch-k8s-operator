@@ -2,6 +2,10 @@ package tls
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -26,12 +30,32 @@ type Cert interface {
 	SecretData(ca Cert) map[string][]byte
 	KeyData() []byte
 	CertData() []byte
-	CreateAndSignCertificate(commonName string, orgUnit string, dnsnames []string, validity time.Duration) (cert Cert, err error)
+	CreateAndSignCertificate(commonName string, orgUnit string, dnsnames []string,
+		validity time.Duration, algorithm KeyGenMethod) (cert Cert, err error)
 }
 
 type CertValidater interface {
 	IsExpiringSoon() bool
 	IsSignedByCA(ca Cert) (bool, error)
+}
+
+type KeyGenMethod string
+
+const (
+	KeyGenMethodRSA2048   KeyGenMethod = "rsa-2048"
+	KeyGenMethodRSA4096   KeyGenMethod = "rsa-4096"
+	KeyGenMethodEd25519   KeyGenMethod = "ed25519"
+	KeyGenMethodECDSAP256 KeyGenMethod = "ecdsa-p256"
+)
+
+type keyGenerationOutput struct {
+	publicKey  cryptoPublicKeyEqual
+	privateKey crypto.Signer
+}
+
+// used as [crypto.PublicKey] but not exported, see note there
+type cryptoPublicKeyEqual interface {
+	Equal(x crypto.PublicKey) bool
 }
 
 // Dummy struct so that PKI interface can be implemented for easier mocking in tests
@@ -122,7 +146,13 @@ func (cert *PEMCert) CertData() []byte {
 	return cert.certBytes
 }
 
-func (ca *PEMCert) CreateAndSignCertificate(commonName string, orgUnit string, dnsnames []string, validity time.Duration) (cert Cert, err error) {
+func (ca *PEMCert) CreateAndSignCertificate(
+	commonName string,
+	orgUnit string,
+	dnsnames []string,
+	validity time.Duration,
+	method KeyGenMethod,
+) (cert Cert, err error) {
 	tlscacert, err := ca.cert()
 	if err != nil {
 		return
@@ -132,7 +162,7 @@ func (ca *PEMCert) CreateAndSignCertificate(commonName string, orgUnit string, d
 		return
 	}
 
-	keypair, err := rsa.GenerateKey(rand.Reader, 4096)
+	keypair, err := generateNewKey(method)
 	if err != nil {
 		return
 	}
@@ -166,7 +196,8 @@ func (ca *PEMCert) CreateAndSignCertificate(commonName string, orgUnit string, d
 		x509cert.ExtraExtensions = []pkix.Extension{san}
 	}
 
-	signed, err := x509.CreateCertificate(rand.Reader, x509cert, cacert, &keypair.PublicKey, tlscacert.PrivateKey)
+	signed, err := x509.CreateCertificate(rand.Reader, x509cert, cacert,
+		keypair.publicKey, tlscacert.PrivateKey)
 	if err != nil {
 		return
 	}
@@ -181,7 +212,7 @@ func (ca *PEMCert) CreateAndSignCertificate(commonName string, orgUnit string, d
 	}
 	certBytes := certPEMBuffer.Bytes()
 
-	pkcs8key, err := x509.MarshalPKCS8PrivateKey(keypair)
+	pkcs8key, err := x509.MarshalPKCS8PrivateKey(keypair.privateKey)
 	if err != nil {
 		return
 	}
@@ -201,6 +232,41 @@ func (ca *PEMCert) CreateAndSignCertificate(commonName string, orgUnit string, d
 
 func (pki *PkiImpl) CAFromSecret(data map[string][]byte) Cert {
 	return &PEMCert{certBytes: data["ca.crt"], keyBytes: data["ca.key"]}
+}
+
+func generateNewKey(method KeyGenMethod) (keyGenerationOutput, error) {
+	result := keyGenerationOutput{}
+	var err error
+	switch method {
+	case KeyGenMethodECDSAP256:
+		genoutput, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err == nil {
+			result.publicKey = &genoutput.PublicKey
+			result.privateKey = genoutput
+		}
+	case KeyGenMethodEd25519:
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err == nil {
+			result.publicKey = pub
+			result.privateKey = priv
+		}
+	case KeyGenMethodRSA2048:
+	case KeyGenMethodRSA4096:
+		var keySize int
+		if method == KeyGenMethodRSA2048 {
+			keySize = 2048
+		} else {
+			keySize = 4096
+		}
+		genoutput, err := rsa.GenerateKey(rand.Reader, keySize)
+		if err == nil {
+			result.publicKey = &genoutput.PublicKey
+			result.privateKey = genoutput
+		}
+	default:
+		panic("unknown KeyGenMethod in CreateAndSignCertificate")
+	}
+	return result, err
 }
 
 func calculateExtension(commonName string, dnsNames []string) (pkix.Extension, error) {
