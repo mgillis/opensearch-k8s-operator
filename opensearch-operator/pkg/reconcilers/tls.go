@@ -238,7 +238,8 @@ func (r *TLSReconciler) createAdminSecret(ca tls.Cert) (*ctrl.Result, error) {
 		return nil, nil
 	}
 
-	adminCert, err := ca.CreateAndSignCertificate("admin", r.instance.Name, nil, r.resolveTransportCertDuration())
+	adminCert, err := ca.CreateAndSignCertificate("admin", r.instance.Name, nil,
+		r.resolveTransportCertDuration(), tls.KeyGenMethodRSA4096)
 	if err != nil {
 		r.logger.Error(err, "Failed to create admin certificate", "interface", "transport")
 		r.recorder.AnnotatedEventf(
@@ -458,7 +459,9 @@ func (r *TLSReconciler) generateBootstrapCertIfNeeded(
 			fmt.Sprintf("%s.%s.svc.%s", clusterName, namespace, helpers.ClusterDnsBase()),
 			fmt.Sprintf("%s.%s.%s.svc.%s", bootstrapPodName, clusterName, namespace, helpers.ClusterDnsBase()),
 		}
-		nodeCert, err := ca.CreateAndSignCertificate(bootstrapPodName, clusterName, dnsNames, r.resolveTransportCertDuration())
+		nodeCert, err := ca.CreateAndSignCertificate(bootstrapPodName,
+			clusterName, dnsNames, r.resolveTransportCertDuration(),
+			tls.KeyGenMethodRSA4096)
 		if err != nil {
 			r.logger.Error(err, "Failed to create node certificate", "interface", "transport", "node", bootstrapPodName)
 			//	r.recorder.Event(r.instance, "Normal", "Security", "Created transport certificates")
@@ -483,17 +486,22 @@ func (r *TLSReconciler) generateNewCertIfNeeded(
 	}
 
 	var certDuration time.Duration
+	var method tls.KeyGenMethod
 	switch cd.certContext {
 	case CertContextHttp:
 		certDuration = r.resolveHttpCertDuration()
+		method = tls.KeyGenMethodRSA4096
 	case CertContextTransport:
 		certDuration = r.resolveTransportCertDuration()
+		// these are used internally to the cluster and so we ought to be
+		// able to use any algorithm we want -- use a fast one
+		method = tls.KeyGenMethodEd25519
 	default:
 		panic("unrecognized certDescription.certContext value")
 	}
 
 	nodeCert, err := ca.CreateAndSignCertificate(cd.commonName, clusterName,
-		cd.dnsNames, certDuration)
+		cd.dnsNames, certDuration, method)
 	if err != nil {
 		r.logger.Error(err, "Failed to create certificate", "interface",
 			cd.certContext, "node", cd.loggingName)

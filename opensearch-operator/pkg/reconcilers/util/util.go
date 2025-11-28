@@ -69,6 +69,7 @@ func ReadOrGenerateCaCert(pki tls.PKI, k8sClient k8s.K8sClient, instance *opster
 	caSecret, err := k8sClient.GetSecret(secretName, namespace)
 	if err != nil {
 		// Generate CA cert and put it into secret
+		logger.Info("Generating new CA certificate")
 		ca, err = pki.GenerateCA(clusterName)
 		if err != nil {
 			logger.Error(err, "Failed to create CA")
