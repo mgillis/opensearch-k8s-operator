@@ -584,6 +584,57 @@ var _ = Describe("TLS Controller", func() {
 			Expect(value).To(Equal("[\"CN=admin,OU=tls-empty-fqdn\"]"))
 		})
 	})
+
+	Context("When Reconciling the TLS configuration with explicitly chosen key generation methods", func() {
+		It("should create certs signed by keys generated that way ", func() {
+			clusterName := "tls-test"
+			caSecretName := clusterName + "-ca"
+			transportSecretName := clusterName + "-transport-cert"
+			httpSecretName := clusterName + "-http-cert"
+			adminSecretName := clusterName + "-admin-cert"
+
+			spec := opsterv1.OpenSearchCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: clusterName, UID: "dummyuid"},
+				Spec: opsterv1.ClusterSpec{
+					General: opsterv1.GeneralConfig{
+						Version: "2.0.0",
+					},
+					Security: &opsterv1.Security{Tls: &opsterv1.TlsConfig{
+						Transport: &opsterv1.TlsConfigTransport{Generate: true, TlsCertificateConfig: opsterv1.TlsCertificateConfig{KeyGenMethod: tls.KeyGenMethodRSA2048}},
+						Http:      &opsterv1.TlsConfigHttp{Generate: true, TlsCertificateConfig: opsterv1.TlsCertificateConfig{KeyGenMethod: tls.KeyGenMethodECDSAP256}},
+					}},
+				},
+			}
+
+			mockClient := k8s.NewMockK8sClient(GinkgoT())
+			mockClient.EXPECT().Context().Return(context.Background())
+			mockClient.EXPECT().Scheme().Return(scheme.Scheme)
+			mockClient.EXPECT().GetSecret(caSecretName, clusterName).Return(corev1.Secret{}, NotFoundError())
+			mockClient.EXPECT().GetSecret(transportSecretName, clusterName).Return(corev1.Secret{}, NotFoundError())
+			mockClient.EXPECT().GetSecret(httpSecretName, clusterName).Return(corev1.Secret{}, NotFoundError())
+			mockClient.EXPECT().GetSecret(adminSecretName, clusterName).Return(corev1.Secret{}, NotFoundError())
+
+			var transportSecretData, httpSecretData map[string][]byte
+
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == caSecretName })).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == transportSecretName })).
+				Run(func(args mock.Arguments) { transportSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == httpSecretName })).
+				Run(func(args mock.Arguments) { httpSecretData = args.Get(0).(*corev1.Secret).Data }).
+				Return(&ctrl.Result{}, nil)
+			mockClient.On("CreateSecret", mock.MatchedBy(func(secret *corev1.Secret) bool { return secret.ObjectMeta.Name == adminSecretName })).
+				Return(&ctrl.Result{}, nil)
+
+			_, underTest := newTLSReconciler(mockClient, &spec)
+			_, err := underTest.Reconcile()
+			Expect(err).ToNot(HaveOccurred())
+
+			ExpectPublicKeyAlgorithm(transportSecretData["tls.crt"]).To(Equal(x509.RSA))
+			ExpectPublicKeyAlgorithm(httpSecretData["tls.crt"]).To(Equal(x509.ECDSA))
+		})
+	})
 })
 
 func ExpectAllCertificatesValidAndSignedByIncludedCA(secretData map[string][]byte, description string) {

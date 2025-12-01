@@ -253,6 +253,7 @@ func generateNewKey(method KeyGenMethod) (keyGenerationOutput, error) {
 			result.privateKey = priv
 		}
 	case KeyGenMethodRSA2048:
+		fallthrough
 	case KeyGenMethodRSA4096:
 		var keySize int
 		if method == KeyGenMethodRSA2048 {
