@@ -2,25 +2,22 @@ package reconcilers
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Masterminds/semver"
 	opsterv1 "github.com/Opster/opensearch-k8s-operator/opensearch-operator/api/v1"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/builders"
+	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/builders/certificates"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/helpers"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconciler"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/k8s"
-	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/util"
+	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/secrets"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/tls"
 	"github.com/go-logr/logr"
-	"github.com/samber/lo"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,27 +28,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-type certContextType string
-
-const (
-	CertContextTransport certContextType = "transport"
-	CertContextHttp      certContextType = "http"
-)
-
-type certDescription struct {
-	loggingName string
-	certContext certContextType
-	commonName  string
-	dnsNames    []string
-}
-
 type TLSReconciler struct {
-	client            k8s.K8sClient
-	reconcilerContext *ReconcilerContext
-	instance          *opsterv1.OpenSearchCluster
-	logger            logr.Logger
-	pki               tls.PKI
-	recorder          record.EventRecorder
+	client              k8s.K8sClient
+	reconcilerContext   *ReconcilerContext
+	instance            *opsterv1.OpenSearchCluster
+	logger              logr.Logger
+	pki                 tls.PKI
+	recorder            record.EventRecorder
+	tlsSecretReconciler *secrets.TLSSecretReconciler
 }
 
 func NewTLSReconciler(
@@ -62,13 +46,18 @@ func NewTLSReconciler(
 	instance *opsterv1.OpenSearchCluster,
 	opts ...reconciler.ResourceReconcilerOption,
 ) *TLSReconciler {
+	k8sClient := k8s.NewK8sClient(client, ctx, append(opts, reconciler.WithLog(log.FromContext(ctx).WithValues("reconciler", "tls")))...)
+	pki := tls.NewPKI()
 	return &TLSReconciler{
-		client:            k8s.NewK8sClient(client, ctx, append(opts, reconciler.WithLog(log.FromContext(ctx).WithValues("reconciler", "tls")))...),
+		client:            k8sClient,
 		recorder:          recorder,
 		reconcilerContext: reconcilerContext,
 		instance:          instance,
 		logger:            log.FromContext(ctx),
-		pki:               tls.NewPKI(),
+		pki:               pki,
+		tlsSecretReconciler: secrets.NewTLSSecretReconciler(
+			pki, k8sClient, ctx, recorder, instance,
+		),
 	}
 }
 
@@ -90,63 +79,70 @@ func (r *TLSReconciler) Reconcile() (ctrl.Result, error) {
 	}
 
 	tlsConfig := r.instance.Spec.Security.Tls
+	overallResult := reconciler.CombinedResult{}
 
 	if tlsConfig.Transport != nil {
-		if err := r.handleTransport(); err != nil {
+		res, err := r.handleTransport()
+		if err != nil {
 			r.logger.Error(err, "Failed to reconcile transport certificates")
 			r.recorder.Eventf(r.instance, "Warning", "ReconcileCertsError", "Couldn't reconcile transport certs: %v", err)
-			return ctrl.Result{}, err
 		}
+		overallResult.Combine(res, err)
 	}
 	if tlsConfig.Http != nil {
-		if err := r.handleHttp(); err != nil {
+		res, err := r.handleHttp()
+		if err != nil {
 			r.logger.Error(err, "Failed to reconcile http certificates")
 			r.recorder.Eventf(r.instance, "Warning", "ReconcileCertsError", "Couldn't reconcile http certs: %v", err)
-			return ctrl.Result{}, err
 		}
+		overallResult.Combine(res, err)
 	}
-	if r.reconcileAdminCert() {
+	if r.shouldReconcileAdminCert() {
 		res, err := r.handleAdminCertificate()
 		if err != nil {
 			r.logger.Error(err, "Failed to reconcile admin certificate")
 			r.recorder.Eventf(r.instance, "Warning", "ReconcileCertsError", "Couldn't reconcile admin cert: %v", err)
 		}
-		return lo.FromPtrOr(res, ctrl.Result{}), err
+		overallResult.Combine(res, err)
 	}
 
-	return ctrl.Result{}, nil
+	return overallResult.Result, overallResult.Err
 }
 
-func (r *TLSReconciler) handleTransport() error {
+func (r *TLSReconciler) handleTransport() (*ctrl.Result, error) {
 	config := r.instance.Spec.Security.Tls.Transport
 
 	if config.Generate {
-		if err := r.handleTransportGenerate(); err != nil {
-			return err
-		}
+		return r.handleTransportGenerate()
 	} else {
-		if err := r.handleTransportExistingCerts(); err != nil {
-			return err
-		}
+		return r.handleTransportExistingCerts()
 	}
-	return nil
 }
 
 func (r *TLSReconciler) handleAdminCertificate() (*ctrl.Result, error) {
 	tlsConfig := r.instance.Spec.Security.Tls.Http
 	clusterName := r.instance.Name
+	secretName := r.instance.Name + "-admin-cert"
 
-	var res *ctrl.Result
 	var certDN string
 	if tlsConfig.Generate || (r.instance.Spec.Security.Config != nil && r.instance.Spec.Security.Config.AdminSecret.Name == "") {
-		ca, err := r.getReferencedCaCertOrDefault(r.adminCAConfig())
+		ca, err := certificates.GetReferencedCaCertOrDefault(r.pki, r.client, r.instance, r.adminCAConfig())
 		if err != nil {
 			return nil, err
 		}
 
-		res, err = r.createAdminSecret(ca)
-		if err != nil {
-			return nil, err
+		res, err := r.tlsSecretReconciler.Reconcile(
+			ca,
+			secretName,
+			certificates.Description{
+				Context:    certificates.ContextAdmin,
+				CommonName: "admin",
+				DnsNames:   nil,
+				Config:     tlsConfig.TlsCertificateConfig,
+			},
+		)
+		if err != nil || !res.IsZero() {
+			return res, err
 		}
 		certDN = fmt.Sprintf("CN=admin,OU=%s", clusterName)
 
@@ -155,7 +151,7 @@ func (r *TLSReconciler) handleAdminCertificate() (*ctrl.Result, error) {
 	}
 
 	r.reconcilerContext.AddConfig("plugins.security.authcz.admin_dn", fmt.Sprintf("[\"%s\"]", certDN))
-	return res, nil
+	return nil, nil
 }
 
 func (r *TLSReconciler) checkVersionConstraint(constraint string, defaultOnError bool, errMsg string) bool {
@@ -188,6 +184,13 @@ func (r *TLSReconciler) supportsHotReload() bool {
 	)
 }
 
+func (r *TLSReconciler) shouldReconcileAdminCert() bool {
+	if r.securityChangeVersion() {
+		return r.instance.Spec.Security.Tls.Http != nil && r.instance.Spec.Security.Tls.Transport != nil
+	}
+	return r.instance.Spec.Security.Tls.Transport != nil
+}
+
 func (r *TLSReconciler) adminCAConfig() corev1.LocalObjectReference {
 	if r.securityChangeVersion() {
 		return r.instance.Spec.Security.Tls.Http.CaSecret
@@ -195,113 +198,23 @@ func (r *TLSReconciler) adminCAConfig() corev1.LocalObjectReference {
 	return r.instance.Spec.Security.Tls.Transport.CaSecret
 }
 
-func (r *TLSReconciler) reconcileAdminCert() bool {
-	if r.securityChangeVersion() {
-		return r.instance.Spec.Security.Tls.Http != nil && r.instance.Spec.Security.Tls.Transport != nil
-	}
-	return r.instance.Spec.Security.Tls.Transport != nil
-}
-
-func (r *TLSReconciler) shouldCreateAdminCert(ca tls.Cert) (bool, error) {
-	secret, err := r.client.GetSecret(r.adminSecretName(), r.instance.Namespace)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			r.logger.Info("admin cert does not exist, creating")
-			return true, nil
-		}
-		return false, err
-	}
-
-	data, ok := secret.Data[corev1.TLSCertKey]
-	if !ok {
-		return true, nil
-	}
-
-	validator, err := tls.NewCertValidater(data, tls.WithExpiryThreshold(5*24*time.Hour))
-	if err != nil {
-		return false, err
-	}
-
-	if validator.IsExpiringSoon() {
-		r.logger.Info("admin cert is expiring soon, recreating")
-		return true, nil
-	}
-
-	verified, err := validator.IsSignedByCA(ca)
-	if err != nil {
-		return false, err
-	}
-
-	if !verified {
-		r.logger.Info("admin cert is not signed by CA, recreating")
-	}
-
-	return !verified, nil
-}
-
-func (r *TLSReconciler) createAdminSecret(ca tls.Cert) (*ctrl.Result, error) {
-	createCert, err := r.shouldCreateAdminCert(ca)
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine if admin cert should be created: %w", err)
-	}
-	if !createCert {
-		return nil, nil
-	}
-
-	r.recorder.Eventf(r.instance, "Normal", "GeneratingCert", "Generating admin certificate")
-	r.logger.Info("Generating admin certificate")
-	adminCert, err := ca.CreateAndSignCertificate("admin", r.instance.Name, nil,
-		r.resolveTransportCertDuration(), tls.KeyGenMethodRSA4096)
-	if err != nil {
-		r.logger.Error(err, "Failed to create admin certificate", "interface", "transport")
-		r.recorder.AnnotatedEventf(
-			r.instance,
-			map[string]string{"cluster-name": r.instance.GetName()},
-			"Warning",
-			"Security",
-			"Failed to create admin certificate",
-		)
-		return nil, err
-	}
-	r.recorder.Eventf(r.instance, "Normal", "GeneratedCert", "Generated admin certificate")
-	r.logger.Info("Finished generating admin certificate")
-	adminSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      r.adminSecretName(),
-			Namespace: r.instance.Namespace,
-		},
-		Type: corev1.SecretTypeTLS,
-		Data: adminCert.SecretData(ca),
-	}
-	if err := ctrl.SetControllerReference(r.instance, adminSecret, r.client.Scheme()); err != nil {
-		return nil, err
-	}
-	return r.client.CreateSecret(adminSecret)
-}
-
-func (r *TLSReconciler) adminSecretName() string {
-	return r.instance.Name + "-admin-cert"
-}
-
-func (r *TLSReconciler) handleTransportGenerate() error {
+func (r *TLSReconciler) handleTransportGenerate() (*ctrl.Result, error) {
 	namespace := r.instance.Namespace
 	clusterName := r.instance.Name
 	nodeSecretName := clusterName + "-transport-cert"
 	config := r.instance.Spec.Security.Tls.Transport
 	generatePerNode := config.PerNode
 
-	ca, err := r.getReferencedCaCertOrDefault(config.CaSecret)
+	ca, err := certificates.GetReferencedCaCertOrDefault(r.pki, r.client, r.instance, config.CaSecret)
 	if err != nil {
-		return err
+		return &ctrl.Result{Requeue: true}, err
 	}
-
-	// r.recorder.Event(r.instance, "Normal", "Security", "Starting to generate certificates")
 
 	nodeSecret, err := r.client.GetSecret(nodeSecretName, namespace)
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
 			r.logger.Error(err, "Failed to get secret for transport certificate(s)")
-			return err
+			return &ctrl.Result{Requeue: true}, err
 		}
 
 		nodeSecret.ObjectMeta = metav1.ObjectMeta{Name: nodeSecretName, Namespace: namespace}
@@ -312,28 +225,31 @@ func (r *TLSReconciler) handleTransportGenerate() error {
 		}
 
 		if err := ctrl.SetControllerReference(r.instance, &nodeSecret, r.client.Scheme()); err != nil {
-			return err
+			return &ctrl.Result{Requeue: true}, err
 		}
 	}
 
 	if !generatePerNode {
-		newCertData, err := r.generateNewCertIfNeeded(
+		newCertData, err := certificates.GenerateNewIfNeeded(
+			r.pki, r.client, r.instance, r.logger,
 			ca,
-			certDescription{
-				loggingName: "global",
-				certContext: CertContextTransport,
-				commonName:  clusterName,
-				dnsNames: []string{
+			certificates.Description{
+				Context:    certificates.ContextTransport,
+				CommonName: clusterName,
+				DnsNames: []string{
 					clusterName,
 					fmt.Sprintf("%s.%s", clusterName, namespace),
 					fmt.Sprintf("%s.%s.svc", clusterName, namespace),
 					fmt.Sprintf("%s.%s.svc.%s", clusterName, namespace, helpers.ClusterDnsBase()),
 				},
+				Config: config.TlsCertificateConfig,
 			},
 			nodeSecret.Data[corev1.TLSCertKey],
 		)
 		if err != nil {
-			return err
+			r.recorder.Eventf(r.instance, "Warning", "ErrorGeneratingCert",
+				"Error generating transport cert: %v", err)
+			return nil, err
 		}
 		if newCertData != nil {
 			nodeSecret.Data = newCertData.SecretData(ca)
@@ -347,80 +263,35 @@ func (r *TLSReconciler) handleTransportGenerate() error {
 		}
 		nodeSecret.Data[CaCertKey] = ca.CertData()
 
-		if err := r.generateBootstrapCertIfNeeded(ca, &nodeSecret); err != nil {
-			return err
-		}
-
 		eg, _ := errgroup.WithContext(r.client.Context())
 		eg.SetLimit(min(SimultaneousCertGenerationCap, runtime.GOMAXPROCS(0)))
-
 		secretMutex := sync.Mutex{}
 
-		// Generate node cert and put it into secret
 		for _, nodePool := range r.instance.Spec.NodePools {
 			for i := 0; i < int(nodePool.Replicas); i++ {
 				podName := fmt.Sprintf("%s-%s-%d", clusterName, nodePool.Component, i)
-				certName := fmt.Sprintf("%s.crt", podName)
-				keyName := fmt.Sprintf("%s.key", podName)
-				secretMutex.Lock()
-				certData := nodeSecret.Data[certName]
-				_, keyExists := nodeSecret.Data[keyName]
-				secretMutex.Unlock()
-				if certData != nil && !keyExists {
-					r.logger.Info("Node certificate exists but has no key, forcing regeneration",
-						"interface", "transport", "node", podName)
-					certData = nil
-				}
-				dnsNames := []string{
-					podName,
-					clusterName,
-					builders.DiscoveryServiceName(r.instance),
-					fmt.Sprintf("%s.%s", podName, clusterName),
-					fmt.Sprintf("%s.%s", clusterName, namespace),
-					fmt.Sprintf("%s.%s.%s", podName, clusterName, namespace),
-					fmt.Sprintf("%s.%s.svc", clusterName, namespace),
-					fmt.Sprintf("%s.%s.%s.svc", podName, clusterName, namespace),
-					fmt.Sprintf("%s.%s.svc.%s", clusterName, namespace, helpers.ClusterDnsBase()),
-					fmt.Sprintf("%s.%s.%s.svc.%s", podName, clusterName, namespace,
-						helpers.ClusterDnsBase()),
-				}
 
-				eg.Go(func() error {
-					newCertData, err := r.generateNewCertIfNeeded(
-						ca,
-						certDescription{
-							loggingName: podName,
-							certContext: CertContextTransport,
-							commonName:  podName,
-							dnsNames:    dnsNames,
-						},
-						certData,
-					)
-					if err != nil {
-						return err
-					}
-					if newCertData != nil {
-						secretMutex.Lock()
-						nodeSecret.Data[certName] = newCertData.CertData()
-						nodeSecret.Data[keyName] = newCertData.KeyData()
-						secretMutex.Unlock()
-					}
-					return nil
-				})
+				r.goReconcileTransportCertForOneNode(podName, &nodeSecret,
+					&secretMutex, eg, ca, config.TlsCertificateConfig)
 			}
+		}
+
+		if !r.instance.Status.Initialized {
+			bootstrapPodName := builders.BootstrapPodName(r.instance)
+			r.goReconcileTransportCertForOneNode(bootstrapPodName, &nodeSecret,
+				&secretMutex, eg, ca, config.TlsCertificateConfig)
 		}
 
 		err := eg.Wait()
 		if err != nil {
 			r.logger.Error(err, "Not all required certificates could be created")
-			return err
+			return nil, err
 		}
 	}
 
-	_, err = r.client.CreateSecret(&nodeSecret)
-	if err != nil {
-		r.logger.Error(err, "Failed to store node certificate(s) in secret", "interface", "transport")
-		return err
+	res, err := r.client.CreateSecret(&nodeSecret)
+	if err != nil || !res.IsZero() {
+		return res, nil
 	}
 
 	// Tell cluster controller to mount secrets
@@ -444,128 +315,79 @@ func (r *TLSReconciler) handleTransportGenerate() error {
 
 	r.reconcilerContext.AddConfig("plugins.security.ssl.transport.pemtrustedcas_filepath", fmt.Sprintf("tls-transport/%s", CaCertKey))
 
-	return nil
+	return nil, nil
 }
 
-func (r *TLSReconciler) generateBootstrapCertIfNeeded(
+func (r *TLSReconciler) goReconcileTransportCertForOneNode(
+	podName string,
+	secret *corev1.Secret,
+	secretMutex *sync.Mutex,
+	eg *errgroup.Group,
 	ca tls.Cert,
-	nodeSecret *corev1.Secret,
-) error {
-	namespace := r.instance.Namespace
+	config opsterv1.TlsCertificateConfig,
+) {
 	clusterName := r.instance.Name
+	namespace := r.instance.Namespace
 
-	// Generate bootstrap pod cert
-	bootstrapPodName := builders.BootstrapPodName(r.instance)
-	_, bootstrapCertExists := nodeSecret.Data[fmt.Sprintf("%s.crt", bootstrapPodName)]
-	_, bootstrapKeyExists := nodeSecret.Data[fmt.Sprintf("%s.key", bootstrapPodName)]
+	certName := fmt.Sprintf("%s.crt", podName)
+	keyName := fmt.Sprintf("%s.key", podName)
+	secretMutex.Lock()
+	certData := secret.Data[certName]
+	_, keyExists := secret.Data[keyName]
+	secretMutex.Unlock()
+	if certData != nil && !keyExists {
+		r.logger.Info("Node certificate exists but has no key, forcing regeneration",
+			"interface", "transport", "node", podName)
+		certData = nil
+	}
+	dnsNames := []string{
+		podName,
+		clusterName,
+		builders.DiscoveryServiceName(r.instance),
+		fmt.Sprintf("%s.%s", podName, clusterName),
+		fmt.Sprintf("%s.%s", clusterName, namespace),
+		fmt.Sprintf("%s.%s.%s", podName, clusterName, namespace),
+		fmt.Sprintf("%s.%s.svc", clusterName, namespace),
+		fmt.Sprintf("%s.%s.%s.svc", podName, clusterName, namespace),
+		fmt.Sprintf("%s.%s.svc.%s", clusterName, namespace, helpers.ClusterDnsBase()),
+		fmt.Sprintf("%s.%s.%s.svc.%s", podName, clusterName, namespace,
+			helpers.ClusterDnsBase()),
+	}
 
-	if !r.instance.Status.Initialized && (!bootstrapCertExists || !bootstrapKeyExists) {
-		dnsNames := []string{
-			bootstrapPodName,
-			clusterName,
-			builders.DiscoveryServiceName(r.instance),
-			fmt.Sprintf("%s.%s", bootstrapPodName, clusterName),
-			fmt.Sprintf("%s.%s", clusterName, namespace),
-			fmt.Sprintf("%s.%s.%s", bootstrapPodName, clusterName, namespace),
-			fmt.Sprintf("%s.%s.svc", clusterName, namespace),
-			fmt.Sprintf("%s.%s.%s.svc", bootstrapPodName, clusterName, namespace),
-			fmt.Sprintf("%s.%s.svc.%s", clusterName, namespace, helpers.ClusterDnsBase()),
-			fmt.Sprintf("%s.%s.%s.svc.%s", bootstrapPodName, clusterName, namespace, helpers.ClusterDnsBase()),
-		}
-		r.recorder.Eventf(r.instance, "Normal", "GeneratingCert", "Generating bootstrap certificate")
-		r.logger.Info("Generating bootstrap certificate")
-		nodeCert, err := ca.CreateAndSignCertificate(bootstrapPodName,
-			clusterName, dnsNames, r.resolveTransportCertDuration(),
-			tls.KeyGenMethodRSA4096)
+	eg.Go(func() error {
+		newCertData, err := certificates.GenerateNewIfNeeded(
+			r.pki, r.client, r.instance, r.logger,
+			ca,
+			certificates.Description{
+				Context:    certificates.ContextTransport,
+				CommonName: podName,
+				DnsNames:   dnsNames,
+				Config:     config,
+			},
+			certData,
+		)
 		if err != nil {
-			r.logger.Error(err, "Failed to create node certificate", "interface", "transport", "node", bootstrapPodName)
-			//	r.recorder.Event(r.instance, "Normal", "Security", "Created transport certificates")
+			r.recorder.Eventf(r.instance, "Warning", "ErrorGeneratingCert",
+				"Error generating transport cert: %v", err)
 			return err
 		}
-		r.recorder.Eventf(r.instance, "Normal", "GeneratedCert", "Generated bootstrap certificate")
-		r.logger.Info("Finished generating bootstrap certificate")
-		//	r.recorder.Event(r.instance, "Normal", "Security", "Created transport certificates")
-		nodeSecret.Data[fmt.Sprintf("%s.crt", bootstrapPodName)] = nodeCert.CertData()
-		nodeSecret.Data[fmt.Sprintf("%s.key", bootstrapPodName)] = nodeCert.KeyData()
-	}
-	return nil
+		if newCertData != nil {
+			secretMutex.Lock()
+			secret.Data[certName] = newCertData.CertData()
+			secret.Data[keyName] = newCertData.KeyData()
+			secretMutex.Unlock()
+		}
+		return nil
+	})
 }
 
-func (r *TLSReconciler) generateNewCertIfNeeded(
-	ca tls.Cert,
-	cd certDescription,
-	existingCertData []byte,
-) (tls.Cert, error) {
-	clusterName := r.instance.Name
-
-	if existingCertData != nil && !r.certShouldBeRenewed(cd, existingCertData) {
-		return nil, nil
-	}
-
-	var certDuration time.Duration
-	var method tls.KeyGenMethod
-	switch cd.certContext {
-	case CertContextHttp:
-		certDuration = r.resolveHttpCertDuration()
-		method = tls.KeyGenMethodRSA4096
-	case CertContextTransport:
-		certDuration = r.resolveTransportCertDuration()
-		// these are used internally to the cluster and so we ought to be
-		// able to use any algorithm we want -- use a fast one
-		method = tls.KeyGenMethodEd25519
-	default:
-		panic("unrecognized certDescription.certContext value")
-	}
-
-	r.recorder.Eventf(r.instance, "Normal", "GeneratingCert", "Generating certificate")
-	r.logger.Info(fmt.Sprintf("Generating %s certificate for %s", cd.certContext, cd.commonName))
-	nodeCert, err := ca.CreateAndSignCertificate(cd.commonName, clusterName,
-		cd.dnsNames, certDuration, method)
-	if err != nil {
-		r.logger.Error(err, "Failed to create certificate", "interface",
-			cd.certContext, "node", cd.loggingName)
-		//		r.recorder.Event(r.instance, "Warning", "Security", "Failed to create node http certifice")
-		return nil, err
-	}
-	r.recorder.Eventf(r.instance, "Normal", "GeneratedCert", "Generated certificate")
-	r.logger.Info(fmt.Sprintf("Generated %s certificate for %s", cd.certContext, cd.commonName))
-	return nodeCert, nil
-}
-
-func (r *TLSReconciler) certShouldBeRenewed(cd certDescription, existingCertData []byte) bool {
-	namespace := r.instance.Namespace
-	clusterName := r.instance.Name
-
-	var renewBeforeExpirationDays int
-	switch cd.certContext {
-	case CertContextTransport:
-		renewBeforeExpirationDays = r.instance.Spec.Security.Tls.Transport.RotateDaysBeforeExpiry
-	case CertContextHttp:
-		renewBeforeExpirationDays = r.instance.Spec.Security.Tls.Http.RotateDaysBeforeExpiry
-	default:
-		panic("unrecognized certDescription.certContext value")
-	}
-
-	daysRemaining, err := getDaysRemainingFromCertificate(existingCertData)
-	if err != nil {
-		r.logger.Error(err, "Failed to parse certificate for expiry date - not renewing", "interface",
-			cd.certContext, "node", cd.loggingName)
-		return false
-	}
-
-	helpers.TlsCertificateDaysRemaining.WithLabelValues(namespace,
-		clusterName, string(cd.certContext), cd.loggingName).Set(float64(daysRemaining))
-
-	return (renewBeforeExpirationDays > 0 && daysRemaining < renewBeforeExpirationDays)
-}
-
-func (r *TLSReconciler) handleTransportExistingCerts() error {
+func (r *TLSReconciler) handleTransportExistingCerts() (*ctrl.Result, error) {
 	tlsConfig := r.instance.Spec.Security.Tls.Transport
 	if tlsConfig.Secret.Name == "" {
 		err := errors.New("missing secret in spec")
 		r.logger.Error(err, "Not all secrets for transport provided")
 		//		r.recorder.Event(r.instance, "Warning", "Security", "Notice - Not all secrets for transport provided")
-		return err
+		return nil, err
 	}
 
 	if tlsConfig.PerNode {
@@ -612,33 +434,20 @@ func (r *TLSReconciler) handleTransportExistingCerts() error {
 	}
 	dnList := strings.Join(tlsConfig.NodesDn, "\",\"")
 	r.reconcilerContext.AddConfig("plugins.security.nodes_dn", fmt.Sprintf("[\"%s\"]", dnList))
-	return nil
+	return nil, nil
 }
 
-func (r *TLSReconciler) handleHttp() error {
+func (r *TLSReconciler) handleHttp() (*ctrl.Result, error) {
 	tlsConfig := r.instance.Spec.Security.Tls.Http
 	namespace := r.instance.Namespace
 	clusterName := r.instance.Name
-	nodeSecretName := clusterName + "-http-cert"
 
 	if tlsConfig.Generate {
-		ca, err := r.getReferencedCaCertOrDefault(tlsConfig.CaSecret)
-		if err != nil {
-			return err
-		}
+		nodeSecretName := clusterName + "-http-cert"
 
-		// Generate node cert, sign it and put it into secret
-		nodeSecret, err := r.client.GetSecret(nodeSecretName, namespace)
+		ca, err := certificates.GetReferencedCaCertOrDefault(r.pki, r.client, r.instance, tlsConfig.CaSecret)
 		if err != nil {
-			if !k8serrors.IsNotFound(err) {
-				r.logger.Error(err, "Failed to get secret for http certificate")
-				return err
-			}
-
-			nodeSecret = corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: nodeSecretName, Namespace: namespace}, Type: corev1.SecretTypeTLS}
-			if err := ctrl.SetControllerReference(r.instance, &nodeSecret, r.client.Scheme()); err != nil {
-				return err
-			}
+			return &ctrl.Result{Requeue: true}, err
 		}
 
 		// Generate node cert and put it into secret
@@ -656,30 +465,18 @@ func (r *TLSReconciler) handleHttp() error {
 		if tlsConfig.CustomFQDN != nil && *tlsConfig.CustomFQDN != "" {
 			dnsNames = append([]string{*tlsConfig.CustomFQDN}, dnsNames...)
 		}
-
-		nodeCert, err := r.generateNewCertIfNeeded(
+		res, err := r.tlsSecretReconciler.Reconcile(
 			ca,
-			certDescription{
-				loggingName: "global",
-				certContext: CertContextHttp,
-				commonName:  clusterName,
-				dnsNames:    dnsNames,
+			nodeSecretName,
+			certificates.Description{
+				Context:    certificates.ContextHttp,
+				CommonName: clusterName,
+				DnsNames:   dnsNames,
+				Config:     tlsConfig.TlsCertificateConfig,
 			},
-			nodeSecret.Data[corev1.TLSCertKey],
 		)
-
-		if err != nil {
-			return err
-		}
-		if nodeCert != nil {
-			nodeSecret.Data = nodeCert.SecretData(ca)
-		}
-
-		_, err = r.client.CreateSecret(&nodeSecret)
-		if err != nil {
-			r.logger.Error(err, "Failed to store node certificate in secret", "interface", "http")
-			//		r.recorder.Event(r.instance, "Warning", "Security", "Failed to store node http certificate in secret")
-			return err
+		if err != nil || !res.IsZero() {
+			return res, nil
 		}
 
 		// Tell cluster controller to mount secrets
@@ -687,12 +484,13 @@ func (r *TLSReconciler) handleHttp() error {
 		r.reconcilerContext.Volumes = append(r.reconcilerContext.Volumes, volume)
 		mount := corev1.VolumeMount{Name: "http-cert", MountPath: "/usr/share/opensearch/config/tls-" + "http"}
 		r.reconcilerContext.VolumeMounts = append(r.reconcilerContext.VolumeMounts, mount)
+
 	} else {
 		if tlsConfig.Secret.Name == "" {
 			err := errors.New("missing secret in spec")
 			r.logger.Error(err, "Not all secrets for http provided")
 			//		r.recorder.Event(r.instance, "Warning", "Security", "Notice - Not all secrets for http provided")
-			return err
+			return &ctrl.Result{}, err
 		}
 
 		// Implement new mounting logic based on CaSecret.Name configuration
@@ -731,30 +529,7 @@ func (r *TLSReconciler) handleHttp() error {
 	if tlsConfig.EnableHotReload && r.supportsHotReload() {
 		r.reconcilerContext.AddConfig("plugins.security.ssl.certificates_hot_reload.enabled", "true")
 	}
-	return nil
-}
-
-func (r *TLSReconciler) getReferencedCaCertOrDefault(
-	secretReference corev1.LocalObjectReference,
-) (tls.Cert, error) {
-	if secretReference.Name == "" {
-		return util.ReadOrGenerateCaCert(r.pki, r.client, r.instance)
-	}
-
-	var ca tls.Cert
-	caSecret, err := r.client.GetSecret(secretReference.Name, r.instance.Namespace)
-	if err != nil {
-		return ca, err
-	}
-	data := caSecret.Data
-	if _, ok := caSecret.Annotations["cert-manager.io/issuer-kind"]; ok {
-		data = map[string][]byte{
-			"ca.crt": caSecret.Data["tls.crt"],
-			"ca.key": caSecret.Data["tls.key"],
-		}
-	}
-	ca = r.pki.CAFromSecret(data)
-	return ca, nil
+	return nil, nil
 }
 
 func mountFolder(interfaceName string, name string, secretName string, reconcilerContext *ReconcilerContext) {
@@ -775,35 +550,4 @@ func mountFolder(interfaceName string, name string, secretName string, reconcile
 func (r *TLSReconciler) DeleteResources() (ctrl.Result, error) {
 	result := reconciler.CombinedResult{}
 	return result.Result, result.Err
-}
-
-func getDaysRemainingFromCertificate(data []byte) (int, error) {
-	der, _ := pem.Decode(data)
-	if der == nil {
-		return -1, fmt.Errorf("failed to decode valid PEM from provided certificate data")
-	}
-	cert, err := x509.ParseCertificate(der.Bytes)
-	if err != nil {
-		return -1, err
-	}
-	daysRemaining := int(time.Until(cert.NotAfter).Hours() / 24)
-	return daysRemaining, nil
-}
-
-func (r *TLSReconciler) resolveTransportCertDuration() time.Duration {
-	if r.instance.Spec.Security != nil && r.instance.Spec.Security.Tls != nil && r.instance.Spec.Security.Tls.Transport != nil {
-		if r.instance.Spec.Security.Tls.Transport.Duration != nil {
-			return r.instance.Spec.Security.Tls.Transport.Duration.Duration
-		}
-	}
-	return 365 * 24 * time.Hour
-}
-
-func (r *TLSReconciler) resolveHttpCertDuration() time.Duration {
-	if r.instance.Spec.Security != nil && r.instance.Spec.Security.Tls != nil && r.instance.Spec.Security.Tls.Http != nil {
-		if r.instance.Spec.Security.Tls.Http.Duration != nil {
-			return r.instance.Spec.Security.Tls.Http.Duration.Duration
-		}
-	}
-	return 365 * 24 * time.Hour
 }

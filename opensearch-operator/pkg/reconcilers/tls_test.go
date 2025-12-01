@@ -11,6 +11,7 @@ import (
 	opsterv1 "github.com/Opster/opensearch-k8s-operator/opensearch-operator/api/v1"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/mocks/github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/k8s"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/helpers"
+	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/secrets"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/tls"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -19,20 +20,24 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func newTLSReconciler(k8sClient *k8s.MockK8sClient, spec *opsterv1.OpenSearchCluster) (*ReconcilerContext, *TLSReconciler) {
 	reconcilerContext := NewReconcilerContext(&helpers.MockEventRecorder{}, spec, spec.Spec.NodePools)
+	pki := tls.NewPKI()
+	recorder := &helpers.MockEventRecorder{}
 	underTest := &TLSReconciler{
 		client:            k8sClient,
-		recorder:          &record.FakeRecorder{},
+		recorder:          recorder,
 		reconcilerContext: &reconcilerContext,
 		instance:          spec,
 		logger:            log.FromContext(context.Background()),
-		pki:               tls.NewPKI(),
+		pki:               pki,
+		tlsSecretReconciler: secrets.NewTLSSecretReconciler(
+			pki, k8sClient, context.Background(), recorder, spec,
+		),
 	}
 	return &reconcilerContext, underTest
 }
@@ -592,6 +597,9 @@ func ExpectAllCertificatesValidAndSignedByIncludedCA(secretData map[string][]byt
 
 func ExpectAllCertificatesValidAndSignedByCA(secretData map[string][]byte, description string, caCertData []byte) {
 	pemBlock, _ := pem.Decode(caCertData)
+	if pemBlock == nil {
+		panic(fmt.Sprintf("no PEM block found in CA Cert Data. Data was %v", string(caCertData)))
+	}
 	ca509Cert, err := x509.ParseCertificate(pemBlock.Bytes)
 	Expect(err).ToNot(HaveOccurred(), "%s has a parseable CA cert")
 

@@ -12,15 +12,13 @@ import (
 
 	context "context"
 
-	mock "github.com/stretchr/testify/mock"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 
-	reconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
+	mock "github.com/stretchr/testify/mock"
 
 	reconciler "github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconciler"
 
 	runtime "k8s.io/apimachinery/pkg/runtime"
-
-	types "k8s.io/apimachinery/pkg/types"
 
 	v1 "k8s.io/api/core/v1"
 )
@@ -86,23 +84,23 @@ func (_c *MockK8sClient_Context_Call) RunAndReturn(run func() context.Context) *
 }
 
 // CreateConfigMap provides a mock function with given fields: cm
-func (_m *MockK8sClient) CreateConfigMap(cm *v1.ConfigMap) (*reconcile.Result, error) {
+func (_m *MockK8sClient) CreateConfigMap(cm *v1.ConfigMap) (*controllerruntime.Result, error) {
 	ret := _m.Called(cm)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateConfigMap")
 	}
 
-	var r0 *reconcile.Result
+	var r0 *controllerruntime.Result
 	var r1 error
-	if rf, ok := ret.Get(0).(func(*v1.ConfigMap) (*reconcile.Result, error)); ok {
+	if rf, ok := ret.Get(0).(func(*v1.ConfigMap) (*controllerruntime.Result, error)); ok {
 		return rf(cm)
 	}
-	if rf, ok := ret.Get(0).(func(*v1.ConfigMap) *reconcile.Result); ok {
+	if rf, ok := ret.Get(0).(func(*v1.ConfigMap) *controllerruntime.Result); ok {
 		r0 = rf(cm)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*reconcile.Result)
+			r0 = ret.Get(0).(*controllerruntime.Result)
 		}
 	}
 
@@ -133,34 +131,34 @@ func (_c *MockK8sClient_CreateConfigMap_Call) Run(run func(cm *v1.ConfigMap)) *M
 	return _c
 }
 
-func (_c *MockK8sClient_CreateConfigMap_Call) Return(_a0 *reconcile.Result, _a1 error) *MockK8sClient_CreateConfigMap_Call {
+func (_c *MockK8sClient_CreateConfigMap_Call) Return(_a0 *controllerruntime.Result, _a1 error) *MockK8sClient_CreateConfigMap_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockK8sClient_CreateConfigMap_Call) RunAndReturn(run func(*v1.ConfigMap) (*reconcile.Result, error)) *MockK8sClient_CreateConfigMap_Call {
+func (_c *MockK8sClient_CreateConfigMap_Call) RunAndReturn(run func(*v1.ConfigMap) (*controllerruntime.Result, error)) *MockK8sClient_CreateConfigMap_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // CreateDeployment provides a mock function with given fields: deployment
-func (_m *MockK8sClient) CreateDeployment(deployment *appsv1.Deployment) (*reconcile.Result, error) {
+func (_m *MockK8sClient) CreateDeployment(deployment *appsv1.Deployment) (*controllerruntime.Result, error) {
 	ret := _m.Called(deployment)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateDeployment")
 	}
 
-	var r0 *reconcile.Result
+	var r0 *controllerruntime.Result
 	var r1 error
-	if rf, ok := ret.Get(0).(func(*appsv1.Deployment) (*reconcile.Result, error)); ok {
+	if rf, ok := ret.Get(0).(func(*appsv1.Deployment) (*controllerruntime.Result, error)); ok {
 		return rf(deployment)
 	}
-	if rf, ok := ret.Get(0).(func(*appsv1.Deployment) *reconcile.Result); ok {
+	if rf, ok := ret.Get(0).(func(*appsv1.Deployment) *controllerruntime.Result); ok {
 		r0 = rf(deployment)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*reconcile.Result)
+			r0 = ret.Get(0).(*controllerruntime.Result)
 		}
 	}
 
@@ -191,34 +189,34 @@ func (_c *MockK8sClient_CreateDeployment_Call) Run(run func(deployment *appsv1.D
 	return _c
 }
 
-func (_c *MockK8sClient_CreateDeployment_Call) Return(_a0 *reconcile.Result, _a1 error) *MockK8sClient_CreateDeployment_Call {
+func (_c *MockK8sClient_CreateDeployment_Call) Return(_a0 *controllerruntime.Result, _a1 error) *MockK8sClient_CreateDeployment_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockK8sClient_CreateDeployment_Call) RunAndReturn(run func(*appsv1.Deployment) (*reconcile.Result, error)) *MockK8sClient_CreateDeployment_Call {
+func (_c *MockK8sClient_CreateDeployment_Call) RunAndReturn(run func(*appsv1.Deployment) (*controllerruntime.Result, error)) *MockK8sClient_CreateDeployment_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // CreateJob provides a mock function with given fields: job
-func (_m *MockK8sClient) CreateJob(job *batchv1.Job) (*reconcile.Result, error) {
+func (_m *MockK8sClient) CreateJob(job *batchv1.Job) (*controllerruntime.Result, error) {
 	ret := _m.Called(job)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateJob")
 	}
 
-	var r0 *reconcile.Result
+	var r0 *controllerruntime.Result
 	var r1 error
-	if rf, ok := ret.Get(0).(func(*batchv1.Job) (*reconcile.Result, error)); ok {
+	if rf, ok := ret.Get(0).(func(*batchv1.Job) (*controllerruntime.Result, error)); ok {
 		return rf(job)
 	}
-	if rf, ok := ret.Get(0).(func(*batchv1.Job) *reconcile.Result); ok {
+	if rf, ok := ret.Get(0).(func(*batchv1.Job) *controllerruntime.Result); ok {
 		r0 = rf(job)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*reconcile.Result)
+			r0 = ret.Get(0).(*controllerruntime.Result)
 		}
 	}
 
@@ -249,34 +247,34 @@ func (_c *MockK8sClient_CreateJob_Call) Run(run func(job *batchv1.Job)) *MockK8s
 	return _c
 }
 
-func (_c *MockK8sClient_CreateJob_Call) Return(_a0 *reconcile.Result, _a1 error) *MockK8sClient_CreateJob_Call {
+func (_c *MockK8sClient_CreateJob_Call) Return(_a0 *controllerruntime.Result, _a1 error) *MockK8sClient_CreateJob_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockK8sClient_CreateJob_Call) RunAndReturn(run func(*batchv1.Job) (*reconcile.Result, error)) *MockK8sClient_CreateJob_Call {
+func (_c *MockK8sClient_CreateJob_Call) RunAndReturn(run func(*batchv1.Job) (*controllerruntime.Result, error)) *MockK8sClient_CreateJob_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // CreateSecret provides a mock function with given fields: secret
-func (_m *MockK8sClient) CreateSecret(secret *v1.Secret) (*reconcile.Result, error) {
+func (_m *MockK8sClient) CreateSecret(secret *v1.Secret) (*controllerruntime.Result, error) {
 	ret := _m.Called(secret)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateSecret")
 	}
 
-	var r0 *reconcile.Result
+	var r0 *controllerruntime.Result
 	var r1 error
-	if rf, ok := ret.Get(0).(func(*v1.Secret) (*reconcile.Result, error)); ok {
+	if rf, ok := ret.Get(0).(func(*v1.Secret) (*controllerruntime.Result, error)); ok {
 		return rf(secret)
 	}
-	if rf, ok := ret.Get(0).(func(*v1.Secret) *reconcile.Result); ok {
+	if rf, ok := ret.Get(0).(func(*v1.Secret) *controllerruntime.Result); ok {
 		r0 = rf(secret)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*reconcile.Result)
+			r0 = ret.Get(0).(*controllerruntime.Result)
 		}
 	}
 
@@ -307,34 +305,34 @@ func (_c *MockK8sClient_CreateSecret_Call) Run(run func(secret *v1.Secret)) *Moc
 	return _c
 }
 
-func (_c *MockK8sClient_CreateSecret_Call) Return(_a0 *reconcile.Result, _a1 error) *MockK8sClient_CreateSecret_Call {
+func (_c *MockK8sClient_CreateSecret_Call) Return(_a0 *controllerruntime.Result, _a1 error) *MockK8sClient_CreateSecret_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockK8sClient_CreateSecret_Call) RunAndReturn(run func(*v1.Secret) (*reconcile.Result, error)) *MockK8sClient_CreateSecret_Call {
+func (_c *MockK8sClient_CreateSecret_Call) RunAndReturn(run func(*v1.Secret) (*controllerruntime.Result, error)) *MockK8sClient_CreateSecret_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // CreateService provides a mock function with given fields: svc
-func (_m *MockK8sClient) CreateService(svc *v1.Service) (*reconcile.Result, error) {
+func (_m *MockK8sClient) CreateService(svc *v1.Service) (*controllerruntime.Result, error) {
 	ret := _m.Called(svc)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateService")
 	}
 
-	var r0 *reconcile.Result
+	var r0 *controllerruntime.Result
 	var r1 error
-	if rf, ok := ret.Get(0).(func(*v1.Service) (*reconcile.Result, error)); ok {
+	if rf, ok := ret.Get(0).(func(*v1.Service) (*controllerruntime.Result, error)); ok {
 		return rf(svc)
 	}
-	if rf, ok := ret.Get(0).(func(*v1.Service) *reconcile.Result); ok {
+	if rf, ok := ret.Get(0).(func(*v1.Service) *controllerruntime.Result); ok {
 		r0 = rf(svc)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*reconcile.Result)
+			r0 = ret.Get(0).(*controllerruntime.Result)
 		}
 	}
 
@@ -365,12 +363,12 @@ func (_c *MockK8sClient_CreateService_Call) Run(run func(svc *v1.Service)) *Mock
 	return _c
 }
 
-func (_c *MockK8sClient_CreateService_Call) Return(_a0 *reconcile.Result, _a1 error) *MockK8sClient_CreateService_Call {
+func (_c *MockK8sClient_CreateService_Call) Return(_a0 *controllerruntime.Result, _a1 error) *MockK8sClient_CreateService_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockK8sClient_CreateService_Call) RunAndReturn(run func(*v1.Service) (*reconcile.Result, error)) *MockK8sClient_CreateService_Call {
+func (_c *MockK8sClient_CreateService_Call) RunAndReturn(run func(*v1.Service) (*controllerruntime.Result, error)) *MockK8sClient_CreateService_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1256,23 +1254,23 @@ func (_c *MockK8sClient_ListStatefulSets_Call) RunAndReturn(run func(...client.L
 }
 
 // ReconcileResource provides a mock function with given fields: _a0, _a1
-func (_m *MockK8sClient) ReconcileResource(_a0 runtime.Object, _a1 reconciler.DesiredState) (*reconcile.Result, error) {
+func (_m *MockK8sClient) ReconcileResource(_a0 runtime.Object, _a1 reconciler.DesiredState) (*controllerruntime.Result, error) {
 	ret := _m.Called(_a0, _a1)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ReconcileResource")
 	}
 
-	var r0 *reconcile.Result
+	var r0 *controllerruntime.Result
 	var r1 error
-	if rf, ok := ret.Get(0).(func(runtime.Object, reconciler.DesiredState) (*reconcile.Result, error)); ok {
+	if rf, ok := ret.Get(0).(func(runtime.Object, reconciler.DesiredState) (*controllerruntime.Result, error)); ok {
 		return rf(_a0, _a1)
 	}
-	if rf, ok := ret.Get(0).(func(runtime.Object, reconciler.DesiredState) *reconcile.Result); ok {
+	if rf, ok := ret.Get(0).(func(runtime.Object, reconciler.DesiredState) *controllerruntime.Result); ok {
 		r0 = rf(_a0, _a1)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*reconcile.Result)
+			r0 = ret.Get(0).(*controllerruntime.Result)
 		}
 	}
 
@@ -1304,12 +1302,12 @@ func (_c *MockK8sClient_ReconcileResource_Call) Run(run func(_a0 runtime.Object,
 	return _c
 }
 
-func (_c *MockK8sClient_ReconcileResource_Call) Return(_a0 *reconcile.Result, _a1 error) *MockK8sClient_ReconcileResource_Call {
+func (_c *MockK8sClient_ReconcileResource_Call) Return(_a0 *controllerruntime.Result, _a1 error) *MockK8sClient_ReconcileResource_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockK8sClient_ReconcileResource_Call) RunAndReturn(run func(runtime.Object, reconciler.DesiredState) (*reconcile.Result, error)) *MockK8sClient_ReconcileResource_Call {
+func (_c *MockK8sClient_ReconcileResource_Call) RunAndReturn(run func(runtime.Object, reconciler.DesiredState) (*controllerruntime.Result, error)) *MockK8sClient_ReconcileResource_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1409,7 +1407,7 @@ func (_c *MockK8sClient_UdateObjectStatus_Call) RunAndReturn(run func(client.Obj
 }
 
 // UpdateOpenSearchClusterStatus provides a mock function with given fields: key, f
-func (_m *MockK8sClient) UpdateOpenSearchClusterStatus(key types.NamespacedName, f func(*apiv1.OpenSearchCluster)) error {
+func (_m *MockK8sClient) UpdateOpenSearchClusterStatus(key client.ObjectKey, f func(*apiv1.OpenSearchCluster)) error {
 	ret := _m.Called(key, f)
 
 	if len(ret) == 0 {
@@ -1417,7 +1415,7 @@ func (_m *MockK8sClient) UpdateOpenSearchClusterStatus(key types.NamespacedName,
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(types.NamespacedName, func(*apiv1.OpenSearchCluster)) error); ok {
+	if rf, ok := ret.Get(0).(func(client.ObjectKey, func(*apiv1.OpenSearchCluster)) error); ok {
 		r0 = rf(key, f)
 	} else {
 		r0 = ret.Error(0)
@@ -1432,15 +1430,15 @@ type MockK8sClient_UpdateOpenSearchClusterStatus_Call struct {
 }
 
 // UpdateOpenSearchClusterStatus is a helper method to define mock.On call
-//   - key types.NamespacedName
+//   - key client.ObjectKey
 //   - f func(*apiv1.OpenSearchCluster)
 func (_e *MockK8sClient_Expecter) UpdateOpenSearchClusterStatus(key interface{}, f interface{}) *MockK8sClient_UpdateOpenSearchClusterStatus_Call {
 	return &MockK8sClient_UpdateOpenSearchClusterStatus_Call{Call: _e.mock.On("UpdateOpenSearchClusterStatus", key, f)}
 }
 
-func (_c *MockK8sClient_UpdateOpenSearchClusterStatus_Call) Run(run func(key types.NamespacedName, f func(*apiv1.OpenSearchCluster))) *MockK8sClient_UpdateOpenSearchClusterStatus_Call {
+func (_c *MockK8sClient_UpdateOpenSearchClusterStatus_Call) Run(run func(key client.ObjectKey, f func(*apiv1.OpenSearchCluster))) *MockK8sClient_UpdateOpenSearchClusterStatus_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(types.NamespacedName), args[1].(func(*apiv1.OpenSearchCluster)))
+		run(args[0].(client.ObjectKey), args[1].(func(*apiv1.OpenSearchCluster)))
 	})
 	return _c
 }
@@ -1450,7 +1448,7 @@ func (_c *MockK8sClient_UpdateOpenSearchClusterStatus_Call) Return(_a0 error) *M
 	return _c
 }
 
-func (_c *MockK8sClient_UpdateOpenSearchClusterStatus_Call) RunAndReturn(run func(types.NamespacedName, func(*apiv1.OpenSearchCluster)) error) *MockK8sClient_UpdateOpenSearchClusterStatus_Call {
+func (_c *MockK8sClient_UpdateOpenSearchClusterStatus_Call) RunAndReturn(run func(client.ObjectKey, func(*apiv1.OpenSearchCluster)) error) *MockK8sClient_UpdateOpenSearchClusterStatus_Call {
 	_c.Call.Return(run)
 	return _c
 }

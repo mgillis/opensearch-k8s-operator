@@ -167,7 +167,7 @@ var _ = Describe("Builders", func() {
 				Component: "coordinators",
 				Roles:     []string{},
 			}
-			result := NewSTSForNodePool("foobar", &clusterObject, nodePool, "foobar", nil, nil, nil)
+			result := NewSTSForNodePool(&clusterObject, nodePool, "foobar", nil, nil, nil)
 			Expect(result.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{
 				Name:  "node.roles",
 				Value: "[]",

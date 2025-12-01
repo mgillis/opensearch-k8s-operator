@@ -7,7 +7,9 @@ import (
 	opsterv1 "github.com/Opster/opensearch-k8s-operator/opensearch-operator/api/v1"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/mocks/github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/k8s"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/helpers"
+	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/secrets"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/util"
+	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/tls"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -24,15 +26,19 @@ import (
 
 func newDashboardsReconciler(k8sClient *k8s.MockK8sClient, spec *opsterv1.OpenSearchCluster) (ReconcilerContext, *DashboardsReconciler) {
 	reconcilerContext := NewReconcilerContext(&helpers.MockEventRecorder{}, spec, spec.Spec.NodePools)
+	pki := tls.NewPKI()
+	recorder := &helpers.MockEventRecorder{}
 	underTest := &DashboardsReconciler{
 		client:            k8sClient,
 		reconcilerContext: &reconcilerContext,
-		recorder:          &helpers.MockEventRecorder{},
+		recorder:          recorder,
 		instance:          spec,
 		logger:            log.FromContext(context.Background()),
-		pki:               helpers.NewMockPKI(),
+		pki:               pki,
+		tlsSecretReconciler: secrets.NewTLSSecretReconciler(
+			pki, k8sClient, context.Background(), recorder, spec,
+		),
 	}
-	underTest.pki = helpers.NewMockPKI()
 	return reconcilerContext, underTest
 }
 
@@ -116,7 +122,6 @@ var _ = Describe("Dashboards Reconciler", func() {
 			mockClient.EXPECT().CreateConfigMap(mock.Anything).Return(&ctrl.Result{}, nil)
 
 			_, underTest := newDashboardsReconciler(mockClient, &spec)
-			underTest.pki = helpers.NewMockPKI()
 			_, err := underTest.Reconcile()
 			Expect(err).ToNot(HaveOccurred())
 

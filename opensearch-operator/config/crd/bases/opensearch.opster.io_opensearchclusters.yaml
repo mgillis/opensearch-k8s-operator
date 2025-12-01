@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.0
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: opensearchclusters.opensearch.opster.io
 spec:
   group: opensearch.opster.io
@@ -3371,9 +3371,24 @@ spec:
                           files when secrets are updated.
                         type: boolean
                       generate:
-                        description: Generate certificate, if false secret must be
-                          provided
+                        description: If set to true the operator will generate a CA
+                          and certificates for the cluster to use, if false secrets
+                          with existing certificates must be supplied
                         type: boolean
+                      keyGenMethod:
+                        description: Optional, method used to generate the signing
+                          key
+                        enum:
+                        - rsa-2048
+                        - rsa-4096
+                        - ed25519
+                        - ecdsa-p256
+                        type: string
+                      rotateDaysBeforeExpiry:
+                        default: -1
+                        description: Automatically rotate certificates before they
+                          expire, set to -1 to disable
+                        type: integer
                       secret:
                         description: Optional, name of a TLS secret that contains
                           ca.crt, tls.key and tls.crt data. If ca.crt is in a different
@@ -6352,6 +6367,15 @@ spec:
                               a CA and certificates for the cluster to use, if false
                               secrets with existing certificates must be supplied
                             type: boolean
+                          keyGenMethod:
+                            description: Optional, method used to generate the signing
+                              key
+                            enum:
+                            - rsa-2048
+                            - rsa-4096
+                            - ed25519
+                            - ecdsa-p256
+                            type: string
                           rotateDaysBeforeExpiry:
                             default: -1
                             description: Automatically rotate certificates before
@@ -6409,6 +6433,15 @@ spec:
                               a CA and certificates for the cluster to use, if false
                               secrets with existing certificates must be supplied
                             type: boolean
+                          keyGenMethod:
+                            description: Optional, method used to generate the signing
+                              key
+                            enum:
+                            - rsa-2048
+                            - rsa-4096
+                            - ed25519
+                            - ecdsa-p256
+                            type: string
                           nodesDn:
                             description: Allowed Certificate DNs for nodes, only used
                               when existing certificates are provided

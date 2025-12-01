@@ -1,3 +1,5 @@
+resolve-type-alias: False
+issue-845-fix: True
 with-expecter: true
 packages:
     github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/k8s:

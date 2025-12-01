@@ -15,6 +15,8 @@ import (
 	"encoding/pem"
 	"math/big"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Implementation based on https://github.com/rancher-sandbox/opni-opensearch-operator/blob/main/pkg/resources/opensearch/certs/certs.go
@@ -189,7 +191,7 @@ func (ca *PEMCert) CreateAndSignCertificate(
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 	}
 	if len(dnsnames) > 0 {
-		san, err := calculateExtension(commonName, dnsnames)
+		san, err := calculateExtension(dnsnames)
 		if err != nil {
 			return cert, err
 		}
@@ -269,7 +271,7 @@ func generateNewKey(method KeyGenMethod) (keyGenerationOutput, error) {
 	return result, err
 }
 
-func calculateExtension(commonName string, dnsNames []string) (pkix.Extension, error) {
+func calculateExtension(dnsNames []string) (pkix.Extension, error) {
 	rawValues := []asn1.RawValue{
 		{FullBytes: []byte{0x88, 0x05, 0x2A, 0x03, 0x04, 0x05, 0x05}},
 	}
@@ -311,7 +313,7 @@ func WithExpiryThreshold(expiryThreshold time.Duration) ImplCertValidaterOption 
 	}
 }
 
-func NewCertValidater(pemData []byte, opts ...ImplCertValidaterOption) (CertValidater, error) {
+func NewCertValidator(pemData []byte, daysLeftGauge prometheus.Gauge, opts ...ImplCertValidaterOption) (CertValidater, error) {
 	var o implCertValidaterOptions
 	o.apply(opts...)
 
@@ -321,6 +323,9 @@ func NewCertValidater(pemData []byte, opts ...ImplCertValidaterOption) (CertVali
 	if err != nil {
 		return nil, err
 	}
+
+	daysLeftGauge.Set(time.Since(cert.NotAfter).Hours() / 24)
+
 	return &implCertValidater{
 		implCertValidaterOptions: o,
 		cert:                     cert,

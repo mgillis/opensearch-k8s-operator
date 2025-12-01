@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/tls"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -236,10 +237,10 @@ type DashboardsConfig struct {
 type DashboardsTlsConfig struct {
 	// Enable HTTPS for Dashboards
 	Enable bool `json:"enable,omitempty"`
-	// Generate certificate, if false secret must be provided
+	// If set to true the operator will generate a CA and certificates for the cluster to use, if false secrets with existing certificates must be supplied
 	Generate bool `json:"generate,omitempty"`
-	// TLS certificate configuration
-	TlsCertificateConfig `json:",omitempty"`
+	//
+	TlsCertificateConfig `json:""`
 }
 
 // Security defines options for managing the opensearch-security plugin
@@ -259,11 +260,8 @@ type TlsConfigTransport struct {
 	Generate bool `json:"generate,omitempty"`
 	// Configure transport node certificate
 	PerNode bool `json:"perNode,omitempty"`
-	// Automatically rotate certificates before they expire, set to -1 to disable
-	//+kubebuilder:default=-1
-	RotateDaysBeforeExpiry int `json:"rotateDaysBeforeExpiry,omitempty"`
 	//
-	TlsCertificateConfig `json:",omitempty"`
+	TlsCertificateConfig `json:""`
 	// Allowed Certificate DNs for nodes, only used when existing certificates are provided
 	NodesDn []string `json:"nodesDn,omitempty"`
 }
@@ -273,11 +271,8 @@ type TlsConfigHttp struct {
 	Generate bool `json:"generate,omitempty"`
 	// Custom FQDN to use for the HTTP certificate. If not set, the operator will use the default cluster DNS names.
 	CustomFQDN *string `json:"customFQDN,omitempty"`
-	// Automatically rotate certificates before they expire, set to -1 to disable
-	//+kubebuilder:default=-1
-	RotateDaysBeforeExpiry int `json:"rotateDaysBeforeExpiry,omitempty"`
 	//
-	TlsCertificateConfig `json:",omitempty"`
+	TlsCertificateConfig `json:""`
 	// DNs of certificates that should have admin access, mainly used for securityconfig updates via securityadmin.sh, only used when existing certificates are provided
 	AdminDn []string `json:"adminDn,omitempty"`
 }
@@ -292,6 +287,12 @@ type TlsCertificateConfig struct {
 	Duration *metav1.Duration `json:"duration,omitempty"`
 	// Enable hot reloading of TLS certificates. When enabled, certificates are mounted as directories instead of using subPath, allowing Kubernetes to update certificate files when secrets are updated.
 	EnableHotReload bool `json:"enableHotReload,omitempty"`
+	// Automatically rotate certificates before they expire, set to -1 to disable
+	//+kubebuilder:default=-1
+	RotateDaysBeforeExpiry int `json:"rotateDaysBeforeExpiry,omitempty"`
+	// Optional, method used to generate the signing key
+	//+kubebuilder:validation:Enum={"rsa-2048","rsa-4096","ed25519","ecdsa-p256"}
+	KeyGenMethod tls.KeyGenMethod `json:"keyGenMethod,omitempty"`
 }
 
 // Reference to a secret

@@ -70,7 +70,7 @@ The following table lists the configurable parameters of the Helm chart.
 | `manager.readinessProbe.initialDelaySeconds` | int | `10` |  |
 | `manager.parallelRecoveryEnabled` | bool | `true` |  |
 | `manager.pprofEndpointsEnabled` | bool | `false` |  |
-| `manager.logEncoding` | string | `"json"` | use "console" for plaintext log output |
+| `manager.logEncoding` | string | `"json"` |  |
 | `manager.image.repository` | string | `"opensearchproject/opensearch-operator"` |  |
 | `manager.image.tag` | string | `""` |  |
 | `manager.image.pullPolicy` | string | `"Always"` |  |

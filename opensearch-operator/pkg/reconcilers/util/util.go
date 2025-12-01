@@ -17,15 +17,12 @@ import (
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/builders"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/helpers"
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/reconcilers/k8s"
-	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/tls"
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kube-openapi/pkg/validation/errors"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -58,35 +55,6 @@ func CheckEquels(from_env *appsv1.StatefulSetSpec, from_crd *appsv1.StatefulSetS
 	} else {
 		return *field_crd_int_ptr, true, nil
 	}
-}
-
-func ReadOrGenerateCaCert(pki tls.PKI, k8sClient k8s.K8sClient, instance *opsterv1.OpenSearchCluster) (tls.Cert, error) {
-	namespace := instance.Namespace
-	clusterName := instance.Name
-	secretName := clusterName + "-ca"
-	logger := log.FromContext(k8sClient.Context())
-	var ca tls.Cert
-	caSecret, err := k8sClient.GetSecret(secretName, namespace)
-	if err != nil {
-		// Generate CA cert and put it into secret
-		logger.Info("Generating new CA certificate")
-		ca, err = pki.GenerateCA(clusterName)
-		if err != nil {
-			logger.Error(err, "Failed to create CA")
-			return ca, err
-		}
-		caSecret = corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace}, Data: ca.SecretDataCA()}
-		if err := ctrl.SetControllerReference(instance, &caSecret, k8sClient.Scheme()); err != nil {
-			return ca, err
-		}
-		if _, err := k8sClient.CreateSecret(&caSecret); err != nil {
-			logger.Error(err, "Failed to store CA in secret")
-			return ca, err
-		}
-	} else {
-		ca = pki.CAFromSecret(caSecret.Data)
-	}
-	return ca, nil
 }
 
 func CreateAdditionalVolumes(
