@@ -172,6 +172,7 @@ func (r *OpenSearchClusterReconciler) deleteExternalResources(ctx context.Contex
 	tls := reconcilers.NewTLSReconciler(
 		r.Client,
 		ctx,
+		r.Recorder,
 		&reconcilerContext,
 		r.Instance,
 	)
@@ -244,7 +245,7 @@ func (r *OpenSearchClusterReconciler) reconcilePhaseRunning(ctx context.Context)
 			if err := r.Get(ctx, client.ObjectKeyFromObject(r.Instance), r.Instance); err != nil {
 				return err
 			}
-			r.Instance.Status.Initialized = builders.AllMastersReady(ctx, r.Client, r.Instance)
+			r.Instance.Status.Initialized = builders.AllMastersReady(ctx, r.Client, r.Instance, r.Recorder, r.Logger)
 			return r.Status().Update(ctx, r.Instance)
 		}); err != nil {
 			return ctrl.Result{}, err
@@ -257,6 +258,7 @@ func (r *OpenSearchClusterReconciler) reconcilePhaseRunning(ctx context.Context)
 	tls := reconcilers.NewTLSReconciler(
 		r.Client,
 		ctx,
+		r.Recorder,
 		&reconcilerContext,
 		r.Instance,
 	)

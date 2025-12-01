@@ -14,6 +14,7 @@ import (
 	"github.com/Opster/opensearch-k8s-operator/opensearch-operator/pkg/tls"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -56,6 +57,8 @@ func (r *DashboardsReconciler) Reconcile() (ctrl.Result, error) {
 
 	volumes, volumeMounts, err := r.handleTls()
 	if err != nil {
+		r.logger.Error(err, "Failed to reconcile dashboard certificate")
+		r.recorder.Eventf(r.instance, "Warning", "ReconcileCertsError", "Couldn't reconcile dashboard cert: %v", err)
 		return ctrl.Result{}, err
 	}
 
@@ -116,8 +119,6 @@ func (r *DashboardsReconciler) handleTls() ([]corev1.Volume, []corev1.VolumeMoun
 	var volumeMounts []corev1.VolumeMount
 
 	if tlsConfig.Generate {
-		r.logger.Info("Generating certificates")
-		r.recorder.AnnotatedEventf(r.instance, annotations, "Normal", "Security", "Starting to generating certificates for Dashboard Cluster")
 		// Take CA from TLS reconciler or generate new one
 		var ca tls.Cert
 		var err error
@@ -133,6 +134,10 @@ func (r *DashboardsReconciler) handleTls() ([]corev1.Volume, []corev1.VolumeMoun
 		// Generate cert and create secret
 		tlsSecret, err := r.client.GetSecret(tlsSecretName, namespace)
 		if err != nil {
+			if !errors.IsNotFound(err) {
+				return volumes, volumeMounts, err
+			}
+
 			// Generate tls cert and put it into secret
 			dnsNames := []string{
 				fmt.Sprintf("%s-dashboards", clusterName),
@@ -144,6 +149,8 @@ func (r *DashboardsReconciler) handleTls() ([]corev1.Volume, []corev1.VolumeMoun
 			if tlsConfig.Duration != nil {
 				validity = tlsConfig.Duration.Duration
 			}
+			r.recorder.Eventf(r.instance, "Normal", "GeneratingCert", "Generating dashboard certificate")
+			r.logger.Info("Generating dashboard certificate")
 			nodeCert, err := ca.CreateAndSignCertificate(clusterName+"-dashboards", clusterName, dnsNames, validity,
 				tls.KeyGenMethodRSA4096)
 			if err != nil {
@@ -151,6 +158,8 @@ func (r *DashboardsReconciler) handleTls() ([]corev1.Volume, []corev1.VolumeMoun
 				r.recorder.AnnotatedEventf(r.instance, annotations, "Warning", "Security", "Failed to store tls certificate for Dashboard Cluster")
 				return volumes, volumeMounts, err
 			}
+			r.recorder.Eventf(r.instance, "Normal", "GeneratedCert", "Generated dashboard certificate")
+			r.logger.Info("Finished generating dashboard certificate")
 			tlsSecret = corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: tlsSecretName, Namespace: namespace}, Data: nodeCert.SecretData(ca)}
 			if err := ctrl.SetControllerReference(r.instance, &tlsSecret, r.client.Scheme()); err != nil {
 				return nil, nil, err

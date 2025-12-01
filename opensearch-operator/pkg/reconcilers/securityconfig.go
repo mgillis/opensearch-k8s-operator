@@ -133,8 +133,6 @@ func (r *SecurityconfigReconciler) Reconcile() (ctrl.Result, error) {
 			return ctrl.Result{}, err
 		}
 		cmdArg = BuildCmdArg(r.instance, &configSecret, r.logger)
-	} else {
-		r.logger.Info("Not passed any SecurityconfigSecret")
 	}
 
 	job, err := r.client.GetJob(jobName, namespace)

@@ -50,9 +50,9 @@ The following table lists the configurable parameters of the Helm chart.
 | `priorityClassName` | string | `""` |  |
 | `manager.securityContext.allowPrivilegeEscalation` | bool | `false` |  |
 | `manager.extraEnv` | list | `[]` |  |
-| `manager.resources.limits.cpu` | string | `"200m"` |  |
+| `manager.resources.limits.cpu` | string | `"1000m"` |  |
 | `manager.resources.limits.memory` | string | `"500Mi"` |  |
-| `manager.resources.requests.cpu` | string | `"100m"` |  |
+| `manager.resources.requests.cpu` | string | `"200m"` |  |
 | `manager.resources.requests.memory` | string | `"350Mi"` |  |
 | `manager.livenessProbe.failureThreshold` | int | `3` |  |
 | `manager.livenessProbe.httpGet.path` | string | `"/healthz"` |  |
@@ -70,6 +70,7 @@ The following table lists the configurable parameters of the Helm chart.
 | `manager.readinessProbe.initialDelaySeconds` | int | `10` |  |
 | `manager.parallelRecoveryEnabled` | bool | `true` |  |
 | `manager.pprofEndpointsEnabled` | bool | `false` |  |
+| `manager.logEncoding` | string | `"json"` | use "console" for plaintext log output |
 | `manager.image.repository` | string | `"opensearchproject/opensearch-operator"` |  |
 | `manager.image.tag` | string | `""` |  |
 | `manager.image.pullPolicy` | string | `"Always"` |  |

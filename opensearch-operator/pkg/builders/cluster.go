@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 
+	"github.com/go-logr/logr"
 	monitoring "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 
 	opsterv1 "github.com/Opster/opensearch-k8s-operator/opensearch-operator/api/v1"
@@ -32,7 +34,6 @@ const (
 )
 
 func NewSTSForNodePool(
-	username string,
 	cr *opsterv1.OpenSearchCluster,
 	node opsterv1.NodePool,
 	configChecksum string,
@@ -1247,9 +1248,10 @@ func NewSecurityconfigUpdateJob(
 	}
 }
 
-func AllMastersReady(ctx context.Context, k8sClient client.Client, cr *opsterv1.OpenSearchCluster) bool {
+func AllMastersReady(ctx context.Context, k8sClient client.Client, cr *opsterv1.OpenSearchCluster, recorder record.EventRecorder, logger logr.Logger) bool {
 	wrappedClient := k8s.NewK8sClient(k8sClient, ctx)
 	for _, nodePool := range cr.Spec.NodePools {
+		npName := nodePool.Component
 		masterRole := helpers.ResolveClusterManagerRole(cr.Spec.General.Version)
 		if helpers.ContainsString(helpers.MapClusterRoles(nodePool.Roles, cr.Spec.General.Version), masterRole) {
 			sts := &appsv1.StatefulSet{}
@@ -1257,19 +1259,28 @@ func AllMastersReady(ctx context.Context, k8sClient client.Client, cr *opsterv1.
 				Name:      StsName(cr, &nodePool),
 				Namespace: cr.Namespace,
 			}, sts); err != nil {
+				logger.Info(fmt.Sprintf("%s not ready: retrieving stateful set: %v", npName, err), "nodepool", npName)
+				recorder.Eventf(cr, "Normal", "WaitingForMasters", "%s not ready: %v", npName, err)
 				return false
 			}
 			readyReplicas, err := helpers.ReadyReplicasForNodePool(wrappedClient, cr, &nodePool)
 			if err != nil {
+				logger.Info(fmt.Sprintf("%s not ready: %v", npName, err), "nodepool", npName)
+				recorder.Eventf(cr, "Warning", "WaitingForMasters", "%s not ready: %v", npName, err)
 				return false
 			}
 			sts.Status.ReadyReplicas = readyReplicas
-			if sts.Status.ReadyReplicas != ptr.Deref(sts.Spec.Replicas, int32(1)) {
+			ready := sts.Status.ReadyReplicas
+			desired := ptr.Deref(sts.Spec.Replicas, int32(1))
+			if ready != desired {
+				logger.Info(fmt.Sprintf("%s ready: %d of %d", npName, ready, desired), "nodepool", npName)
+				recorder.Eventf(cr, "Normal", "WaitingForMasters", "%s ready: %d of %d", npName, ready, desired)
 				return false
 			}
-
 		}
 	}
+	logger.Info("All masters ready")
+	recorder.Eventf(cr, "Normal", "MastersReady", "All masters ready")
 	return true
 }
 

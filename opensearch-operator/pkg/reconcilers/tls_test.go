@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -27,6 +28,7 @@ func newTLSReconciler(k8sClient *k8s.MockK8sClient, spec *opsterv1.OpenSearchClu
 	reconcilerContext := NewReconcilerContext(&helpers.MockEventRecorder{}, spec, spec.Spec.NodePools)
 	underTest := &TLSReconciler{
 		client:            k8sClient,
+		recorder:          &record.FakeRecorder{},
 		reconcilerContext: &reconcilerContext,
 		instance:          spec,
 		logger:            log.FromContext(context.Background()),

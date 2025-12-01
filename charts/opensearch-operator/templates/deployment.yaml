@@ -29,6 +29,7 @@ spec:
         - --leader-elect
         - --enable-webhooks={{ .Values.webhook.enabled }}
         - --webhook-port={{ .Values.webhook.port }}
+        - --zap-encoder={{ .Values.manager.logEncoding }}
         {{- if .Values.manager.watchNamespace }}
         {{- if kindIs "slice" .Values.manager.watchNamespace }}
         - --watch-namespace={{ .Values.manager.watchNamespace | join "," }}

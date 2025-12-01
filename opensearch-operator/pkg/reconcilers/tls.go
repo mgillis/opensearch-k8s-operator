@@ -57,12 +57,14 @@ type TLSReconciler struct {
 func NewTLSReconciler(
 	client client.Client,
 	ctx context.Context,
+	recorder record.EventRecorder,
 	reconcilerContext *ReconcilerContext,
 	instance *opsterv1.OpenSearchCluster,
 	opts ...reconciler.ResourceReconcilerOption,
 ) *TLSReconciler {
 	return &TLSReconciler{
 		client:            k8s.NewK8sClient(client, ctx, append(opts, reconciler.WithLog(log.FromContext(ctx).WithValues("reconciler", "tls")))...),
+		recorder:          recorder,
 		reconcilerContext: reconcilerContext,
 		instance:          instance,
 		logger:            log.FromContext(ctx),
@@ -91,16 +93,24 @@ func (r *TLSReconciler) Reconcile() (ctrl.Result, error) {
 
 	if tlsConfig.Transport != nil {
 		if err := r.handleTransport(); err != nil {
+			r.logger.Error(err, "Failed to reconcile transport certificates")
+			r.recorder.Eventf(r.instance, "Warning", "ReconcileCertsError", "Couldn't reconcile transport certs: %v", err)
 			return ctrl.Result{}, err
 		}
 	}
 	if tlsConfig.Http != nil {
 		if err := r.handleHttp(); err != nil {
+			r.logger.Error(err, "Failed to reconcile http certificates")
+			r.recorder.Eventf(r.instance, "Warning", "ReconcileCertsError", "Couldn't reconcile http certs: %v", err)
 			return ctrl.Result{}, err
 		}
 	}
 	if r.reconcileAdminCert() {
 		res, err := r.handleAdminCertificate()
+		if err != nil {
+			r.logger.Error(err, "Failed to reconcile admin certificate")
+			r.recorder.Eventf(r.instance, "Warning", "ReconcileCertsError", "Couldn't reconcile admin cert: %v", err)
+		}
 		return lo.FromPtrOr(res, ctrl.Result{}), err
 	}
 
@@ -238,6 +248,8 @@ func (r *TLSReconciler) createAdminSecret(ca tls.Cert) (*ctrl.Result, error) {
 		return nil, nil
 	}
 
+	r.recorder.Eventf(r.instance, "Normal", "GeneratingCert", "Generating admin certificate")
+	r.logger.Info("Generating admin certificate")
 	adminCert, err := ca.CreateAndSignCertificate("admin", r.instance.Name, nil,
 		r.resolveTransportCertDuration(), tls.KeyGenMethodRSA4096)
 	if err != nil {
@@ -251,6 +263,8 @@ func (r *TLSReconciler) createAdminSecret(ca tls.Cert) (*ctrl.Result, error) {
 		)
 		return nil, err
 	}
+	r.recorder.Eventf(r.instance, "Normal", "GeneratedCert", "Generated admin certificate")
+	r.logger.Info("Finished generating admin certificate")
 	adminSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.adminSecretName(),
@@ -281,7 +295,6 @@ func (r *TLSReconciler) handleTransportGenerate() error {
 		return err
 	}
 
-	r.logger.Info("Reconciling certificates", "interface", "transport")
 	// r.recorder.Event(r.instance, "Normal", "Security", "Starting to generate certificates")
 
 	nodeSecret, err := r.client.GetSecret(nodeSecretName, namespace)
@@ -459,6 +472,8 @@ func (r *TLSReconciler) generateBootstrapCertIfNeeded(
 			fmt.Sprintf("%s.%s.svc.%s", clusterName, namespace, helpers.ClusterDnsBase()),
 			fmt.Sprintf("%s.%s.%s.svc.%s", bootstrapPodName, clusterName, namespace, helpers.ClusterDnsBase()),
 		}
+		r.recorder.Eventf(r.instance, "Normal", "GeneratingCert", "Generating bootstrap certificate")
+		r.logger.Info("Generating bootstrap certificate")
 		nodeCert, err := ca.CreateAndSignCertificate(bootstrapPodName,
 			clusterName, dnsNames, r.resolveTransportCertDuration(),
 			tls.KeyGenMethodRSA4096)
@@ -467,6 +482,8 @@ func (r *TLSReconciler) generateBootstrapCertIfNeeded(
 			//	r.recorder.Event(r.instance, "Normal", "Security", "Created transport certificates")
 			return err
 		}
+		r.recorder.Eventf(r.instance, "Normal", "GeneratedCert", "Generated bootstrap certificate")
+		r.logger.Info("Finished generating bootstrap certificate")
 		//	r.recorder.Event(r.instance, "Normal", "Security", "Created transport certificates")
 		nodeSecret.Data[fmt.Sprintf("%s.crt", bootstrapPodName)] = nodeCert.CertData()
 		nodeSecret.Data[fmt.Sprintf("%s.key", bootstrapPodName)] = nodeCert.KeyData()
@@ -500,6 +517,8 @@ func (r *TLSReconciler) generateNewCertIfNeeded(
 		panic("unrecognized certDescription.certContext value")
 	}
 
+	r.recorder.Eventf(r.instance, "Normal", "GeneratingCert", "Generating certificate")
+	r.logger.Info(fmt.Sprintf("Generating %s certificate for %s", cd.certContext, cd.commonName))
 	nodeCert, err := ca.CreateAndSignCertificate(cd.commonName, clusterName,
 		cd.dnsNames, certDuration, method)
 	if err != nil {
@@ -508,6 +527,8 @@ func (r *TLSReconciler) generateNewCertIfNeeded(
 		//		r.recorder.Event(r.instance, "Warning", "Security", "Failed to create node http certifice")
 		return nil, err
 	}
+	r.recorder.Eventf(r.instance, "Normal", "GeneratedCert", "Generated certificate")
+	r.logger.Info(fmt.Sprintf("Generated %s certificate for %s", cd.certContext, cd.commonName))
 	return nodeCert, nil
 }
 
@@ -601,8 +622,6 @@ func (r *TLSReconciler) handleHttp() error {
 	nodeSecretName := clusterName + "-http-cert"
 
 	if tlsConfig.Generate {
-		r.logger.Info("Reconciling certificates", "interface", "http")
-
 		ca, err := r.getReferencedCaCertOrDefault(tlsConfig.CaSecret)
 		if err != nil {
 			return err

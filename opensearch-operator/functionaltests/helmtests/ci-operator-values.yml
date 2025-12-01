@@ -1,8 +1,9 @@
 manager:
+  logEncoding: console
   image:
     repository: controller
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 # NOTE(joseb): disable validation webhooks
 webhook:
   enabled: false
